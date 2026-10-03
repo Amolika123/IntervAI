@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, useRef, use } from 'react';
 import { useRouter } from 'next/navigation';
-import { Mic, MicOff, Volume2, Square, Clock, ShieldCheck, Sparkles, Send, Bot, User, CheckCircle } from 'lucide-react';
+import { Mic, MicOff, Volume2, Square, Clock, Sparkles, Send, Bot, User, VolumeX, RefreshCw, AlertCircle, Play, ChevronDown, ChevronUp } from 'lucide-react';
+import { SpeechEngine, VoiceState } from '@/lib/voice/speechEngine';
 
 interface LiveInterviewProps {
   params: Promise<{ id: string }>;
@@ -20,45 +21,57 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
   const resolvedParams = use(params);
   const interviewId = resolvedParams.id;
 
-  // Session & Audio States
+  // Session & Voice States
   const [candidateName, setCandidateName] = useState<string>('Candidate');
   const [projects, setProjects] = useState<any[]>([]);
+  const [voiceState, setVoiceState] = useState<VoiceState>('READY_TO_START');
+  const [sessionStarted, setSessionStarted] = useState<boolean>(false);
   const [micGranted, setMicGranted] = useState<boolean | null>(null);
-  const [isAiSpeaking, setIsAiSpeaking] = useState<boolean>(false);
-  const [isCandidateSpeaking, setIsCandidateSpeaking] = useState<boolean>(false);
+  const [interimSpeechText, setInterimSpeechText] = useState<string>('');
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [isEnding, setIsEnding] = useState<boolean>(false);
-  const [mockMode, setMockMode] = useState<boolean>(false);
-  const [simulatedText, setSimulatedText] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showAccessibilityText, setShowAccessibilityText] = useState<boolean>(false);
+  const [manualText, setManualText] = useState<string>('');
 
-  // Transcript Turns
+  // Transcript & Grounding State
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [currentQuestionOrder, setCurrentQuestionOrder] = useState<number>(1);
   const [activeGroundingSource, setActiveGroundingSource] = useState<string>('resume:project_1');
+  const [openingQuestionText, setOpeningQuestionText] = useState<string>('');
 
-  // PeerConnection & Audio References
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const dataChannelRef = useRef<RTCDataChannel | null>(null);
-  const audioStreamRef = useRef<MediaStream | null>(null);
+  // Engine References
+  const speechEngineRef = useRef<SpeechEngine | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize Session
+  // Initialize Session Data
   useEffect(() => {
     let isMounted = true;
 
-    async function setupSession() {
-      try {
-        // Request microphone permission
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          audioStreamRef.current = stream;
-          if (isMounted) setMicGranted(true);
-        } catch (err) {
-          console.warn('Microphone access denied or not available:', err);
-          if (isMounted) setMicGranted(false);
+    const engine = new SpeechEngine({
+      onStateChange: (state) => {
+        if (isMounted) setVoiceState(state);
+      },
+      onInterimTranscript: (text) => {
+        if (isMounted) setInterimSpeechText(text);
+      },
+      onFinalTranscript: (finalText) => {
+        if (isMounted && finalText.trim().length > 0) {
+          handleCandidateFinalAnswer(finalText.trim());
         }
+      },
+      onError: (msg) => {
+        if (isMounted) {
+          setErrorMessage(msg);
+          setVoiceState('ERROR');
+        }
+      }
+    });
 
-        // Request WebRTC Ephemeral Session from API
+    speechEngineRef.current = engine;
+
+    async function loadInterviewData() {
+      try {
         const sessionRes = await fetch('/api/interview/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -66,10 +79,6 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
         });
 
         const sessionData = await sessionRes.json();
-
-        if (!sessionRes.ok || !sessionData.success) {
-          console.warn('Session API returned non-200 or mock mode:', sessionData);
-        }
 
         if (sessionData.candidateContext?.candidate?.name) {
           setCandidateName(sessionData.candidateContext.candidate.name);
@@ -82,147 +91,89 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
           }
         }
 
-        if (sessionData.mockMode) {
-          setMockMode(true);
-          // Pre-populate initial opening question from system prompt
-          const initialQ = sessionData.candidateContext?.projects?.[0]
-            ? `Can you walk me through the overall architecture of your ${sessionData.candidateContext.projects[0].name} project?`
-            : `Can you walk me through your primary technical project listed on your resume?`;
+        const p1 = sessionData.candidateContext?.projects?.[0];
+        const openingQ = p1
+          ? `Hello ${sessionData.candidateContext?.candidate?.name || ''}. Can you walk me through the overall architecture of your ${p1.name} project?`
+          : `Hello ${sessionData.candidateContext?.candidate?.name || ''}. Can you walk me through your primary technical project listed on your resume?`;
 
-          setTranscript([
-            { order: 1, speaker: 'AI', text: initialQ, groundingSource: 'project:overview' }
-          ]);
-        } else if (sessionData.clientSecret && process.env.NEXT_PUBLIC_ENABLE_WEBRTC) {
-          // Initialize Realtime WebRTC Peer Connection
-          await initializeWebRTC(sessionData.clientSecret, sessionData.systemInstructions);
-        } else {
-          // Default browser preview mode
-          setMockMode(true);
-          const initialQ = sessionData.candidateContext?.projects?.[0]
-            ? `Can you walk me through the architecture of your ${sessionData.candidateContext.projects[0].name} project?`
-            : `Can you walk me through your primary technical project?`;
+        const openingSrc = p1 ? `project:${p1.name}:${p1.contextSource}` : 'resume:project_overview';
 
+        if (isMounted) {
+          setOpeningQuestionText(openingQ);
+          setActiveGroundingSource(openingSrc);
           setTranscript([
-            { order: 1, speaker: 'AI', text: initialQ, groundingSource: 'project:overview' }
+            { order: 1, speaker: 'AI', text: openingQ, groundingSource: openingSrc }
           ]);
         }
-
-        // Start Elapsed Timer
-        timerRef.current = setInterval(() => {
-          setElapsedSeconds(prev => prev + 1);
-        }, 1000);
-
       } catch (e) {
-        console.error('Failed to setup interview voice session:', e);
+        console.error('Failed to load session data:', e);
+        if (isMounted) {
+          setErrorMessage('Failed to connect to interview session.');
+          setVoiceState('ERROR');
+        }
       }
     }
 
-    setupSession();
+    loadInterviewData();
 
     return () => {
       isMounted = false;
       if (timerRef.current) clearInterval(timerRef.current);
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close();
-      }
+      if (speechEngineRef.current) speechEngineRef.current.destroy();
     };
   }, [interviewId]);
 
-  // WebRTC Setup helper
-  const initializeWebRTC = async (ephemeralKey: string, instructions: string) => {
+  // User Gesture Click Handler: Unlocks Audio Context & Starts Spoken AI Voice
+  const handleStartVoiceSession = async () => {
+    if (!speechEngineRef.current) return;
+
+    // 1. Warm up browser audio context
+    speechEngineRef.current.unlockAudioContext();
+    setSessionStarted(true);
+
+    // 2. Request Microphone Access
     try {
-      const pc = new RTCPeerConnection();
-      peerConnectionRef.current = pc;
-
-      // Remote Audio Output Element
-      const audioEl = document.createElement('audio');
-      audioEl.autoplay = true;
-      pc.ontrack = e => {
-        audioEl.srcObject = e.streams[0];
-        setIsAiSpeaking(true);
-      };
-
-      // Add local audio tracks
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach(track => pc.addTrack(track, audioStreamRef.current!));
-      }
-
-      // Create Data Channel for Realtime transcript & event sync
-      const dc = pc.createDataChannel('oai-events');
-      dataChannelRef.current = dc;
-
-      dc.onmessage = (e) => {
-        const event = JSON.parse(e.data);
-        if (event.type === 'response.audio_transcript.delta') {
-          setIsAiSpeaking(true);
-        } else if (event.type === 'response.audio_transcript.done') {
-          setIsAiSpeaking(false);
-          // Record AI turn
-          if (event.transcript) {
-            setTranscript(prev => [...prev, {
-              order: currentQuestionOrder,
-              speaker: 'AI',
-              text: event.transcript,
-              groundingSource: activeGroundingSource
-            }]);
-          }
-        } else if (event.type === 'input_audio_buffer.speech_started') {
-          setIsCandidateSpeaking(true);
-        } else if (event.type === 'input_audio_buffer.speech_stopped') {
-          setIsCandidateSpeaking(false);
-        }
-      };
-
-      // Create WebRTC Offer
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      const baseUrl = 'https://api.openai.com/v1/realtime';
-      const sdpResponse = await fetch(`${baseUrl}?model=gpt-4o-realtime-preview-2024-12-17`, {
-        method: 'POST',
-        body: offer.sdp,
-        headers: {
-          Authorization: `Bearer ${ephemeralKey}`,
-          'Content-Type': 'application/sdp'
-        }
-      });
-
-      const answerSDP = await sdpResponse.text();
-      await pc.setRemoteDescription({ type: 'answer', sdp: answerSDP });
-
-    } catch (e) {
-      console.error('WebRTC initialization error:', e);
-      setMockMode(true);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setMicGranted(true);
+      stream.getTracks().forEach(t => t.stop());
+    } catch (err) {
+      console.warn('Microphone permission denied:', err);
+      setMicGranted(false);
     }
+
+    // 3. Start Timer
+    timerRef.current = setInterval(() => {
+      setElapsedSeconds(prev => prev + 1);
+    }, 1000);
+
+    // 4. Speak Opening Question Aloud
+    await speechEngineRef.current.speakAIQuestion(openingQuestionText);
   };
 
-  // Persist turn to DB and handle follow-up question generation in preview mode
-  const handleCandidateResponse = async (answerText: string) => {
+  // Candidate Final Answer Handler (VAD auto-submit or manual click)
+  const handleCandidateFinalAnswer = async (answerText: string) => {
     if (!answerText.trim()) return;
+
+    setVoiceState('PROCESSING_ANSWER');
+    setInterimSpeechText('');
 
     const lastAiTurn = [...transcript].reverse().find(t => t.speaker === 'AI');
     const questionText = lastAiTurn ? lastAiTurn.text : 'Grounded project question';
 
-    // Append Candidate turn to UI
-    const updatedTranscript: TranscriptTurn[] = [
-      ...transcript,
-      { order: currentQuestionOrder, speaker: 'Candidate', text: answerText }
-    ];
-    setTranscript(updatedTranscript);
-    setSimulatedText('');
-    setIsCandidateSpeaking(false);
+    const currentOrder = currentQuestionOrder;
+    setTranscript(prev => [
+      ...prev,
+      { order: currentOrder, speaker: 'Candidate', text: answerText }
+    ]);
 
-    // Save turn asynchronously to DB
+    // Save turn asynchronously to backend DB
     try {
       await fetch('/api/interview/answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           interviewId,
-          order: currentQuestionOrder,
+          order: currentOrder,
           questionText,
           groundingSource: activeGroundingSource,
           transcript: answerText
@@ -232,12 +183,12 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
       console.error('Failed to persist turn:', e);
     }
 
-    // Determine adaptive next grounded question
-    const nextOrder = currentQuestionOrder + 1;
+    const nextOrder = currentOrder + 1;
     setCurrentQuestionOrder(nextOrder);
+    setVoiceState('GENERATING_NEXT_QUESTION');
 
-    // Dynamic Follow-up logic
-    setTimeout(() => {
+    // Dynamic Follow-up logic grounded in candidate resume
+    setTimeout(async () => {
       let nextQ = '';
       let nextSource = activeGroundingSource;
 
@@ -245,41 +196,62 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
       const p2 = projects[1];
 
       if (nextOrder === 2 && p1) {
-        nextQ = `Why did you choose the specific architecture and tech stack for ${p1.name}? What alternatives did you consider?`;
+        nextQ = `Why did you choose the specific architecture and tech stack for ${p1.name}? What trade-offs or alternatives did you consider?`;
         nextSource = `project:${p1.name}:architecture_tradeoffs`;
       } else if (nextOrder === 3 && p1) {
-        nextQ = `What happens in ${p1.name} if there's a failure or an edge case during document retrieval or high concurrent load?`;
+        nextQ = `What happens in ${p1.name} if there's a failure or an edge case during data processing or under heavy traffic load?`;
         nextSource = `project:${p1.name}:failure_edge_cases`;
       } else if (nextOrder === 4 && p2) {
-        nextQ = `Moving to another project on your resume, ${p2.name}. Can you walk me through how you implemented it?`;
+        nextQ = `Moving to another project on your resume, ${p2.name}. Can you walk me through how you implemented its core functionality?`;
         nextSource = `project:${p2.name}:overview`;
       } else {
-        nextQ = `How would you measure and optimize the scalability or query latency of the systems you built?`;
+        nextQ = `How would you evaluate and optimize the scalability or latency of the systems you built?`;
         nextSource = `resume:skills:scalability`;
       }
 
       setActiveGroundingSource(nextSource);
+
       setTranscript(prev => [
         ...prev,
         { order: nextOrder, speaker: 'AI', text: nextQ, groundingSource: nextSource }
       ]);
-    }, 600);
+
+      // Speak Next AI Question Aloud
+      if (speechEngineRef.current) {
+        await speechEngineRef.current.speakAIQuestion(nextQ);
+      }
+    }, 800);
+  };
+
+  const handleInterruptAI = () => {
+    if (speechEngineRef.current) {
+      speechEngineRef.current.stopSpeaking();
+      speechEngineRef.current.startListening();
+    }
+  };
+
+  const handleManualStartListening = () => {
+    if (speechEngineRef.current) {
+      speechEngineRef.current.startListening();
+    }
   };
 
   const handleEndInterview = async () => {
     setIsEnding(true);
+    setVoiceState('INTERVIEW_ENDED');
+    if (speechEngineRef.current) {
+      speechEngineRef.current.destroy();
+    }
+
     try {
-      // Finalize session in DB & trigger Evaluation Engine
-      const endRes = await fetch('/api/interview/end', {
+      await fetch('/api/interview/end', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ interviewId })
       });
-
-      const endData = await endRes.json();
       router.push(`/results/${interviewId}`);
     } catch (e) {
-      console.error('Error ending interview:', e);
+      console.error('Error concluding interview:', e);
       router.push(`/results/${interviewId}`);
     }
   };
@@ -290,20 +262,40 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const renderVoiceStateBanner = () => {
+    switch (voiceState) {
+      case 'AI_SPEAKING':
+        return { label: 'IntervAI is speaking question aloud...', color: 'var(--accent-cyan)', icon: <Volume2 size={20} /> };
+      case 'LISTENING':
+        return { label: 'Listening to you... Speak your answer into microphone', color: '#22c55e', icon: <Mic size={20} /> };
+      case 'PROCESSING_ANSWER':
+        return { label: 'Analyzing candidate answer...', color: 'var(--accent-purple)', icon: <RefreshCw size={20} className="spin" /> };
+      case 'GENERATING_NEXT_QUESTION':
+        return { label: 'Formulating next grounded follow-up question...', color: 'var(--accent-indigo)', icon: <Sparkles size={20} /> };
+      case 'ERROR':
+        return { label: errorMessage || 'Microphone error', color: '#f87171', icon: <AlertCircle size={20} /> };
+      default:
+        return { label: 'Ready to Start Voice Session', color: 'var(--accent-indigo)', icon: <Play size={20} /> };
+    }
+  };
+
+  const stateBanner = renderVoiceStateBanner();
+
   return (
     <main style={{ minHeight: '100vh', padding: '2rem 1.5rem', maxWidth: '1100px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      {/* Top Navigation / Status Header */}
+      
+      {/* Navigation Header */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
             width: '12px',
             height: '12px',
             borderRadius: '50%',
-            background: isAiSpeaking ? 'var(--accent-cyan)' : isCandidateSpeaking ? 'var(--accent-pink)' : '#22c55e',
-            boxShadow: '0 0 12px #22c55e'
+            background: stateBanner.color,
+            boxShadow: `0 0 12px ${stateBanner.color}`
           }} />
           <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>
-            Live Technical Interview <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>• {candidateName}</span>
+            Live Voice Technical Interview <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>• {candidateName}</span>
           </span>
         </div>
 
@@ -320,51 +312,142 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
         </div>
       </header>
 
-      {/* Main Voice Interactive Stage */}
+      {/* Main Interactive Stage */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '1.5rem', flex: 1 }}>
-        {/* Left Column: Visualizer & Live Transcript */}
+        
+        {/* Left Column: Voice Orb & Transcript */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {/* Avatar / Speaker Indicator Panel */}
+          
+          {/* AI Voice Avatar Orb Panel */}
           <div className="glass-panel" style={{ padding: '2.5rem 2rem', textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
-            <div style={{
-              width: '100px',
-              height: '100px',
-              borderRadius: '50%',
-              background: isAiSpeaking ? 'var(--gradient-primary)' : 'var(--bg-surface-elevated)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 1.5rem auto',
-              border: '2px solid var(--border-highlight)',
-              transition: 'all 0.4s ease'
-            }} className={isAiSpeaking ? 'voice-pulse-active' : ''}>
-              <Bot size={48} color={isAiSpeaking ? '#ffffff' : 'var(--accent-indigo)'} />
-            </div>
-
-            <h3 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '0.25rem' }}>
-              Interv<span className="gradient-text">AI</span> Lead Interviewer
-            </h3>
             
-            <p style={{ color: isAiSpeaking ? 'var(--accent-cyan)' : 'var(--text-secondary)', fontSize: '0.925rem', fontWeight: 600 }}>
-              {isAiSpeaking ? 'Speaking grounded technical question...' : isCandidateSpeaking ? 'Listening to candidate response...' : 'Waiting for candidate input...'}
-            </p>
-
-            {/* Audio Waveform visualization */}
-            {(isAiSpeaking || isCandidateSpeaking) && (
-              <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', height: '40px', marginTop: '1rem' }}>
-                <div className="wave-bar" />
-                <div className="wave-bar" />
-                <div className="wave-bar" />
-                <div className="wave-bar" />
-                <div className="wave-bar" />
+            {/* Start Voice Session Overlay if not started */}
+            {!sessionStarted ? (
+              <div style={{ padding: '1rem 0' }}>
+                <div style={{
+                  width: '90px',
+                  height: '90px',
+                  borderRadius: '50%',
+                  background: 'var(--gradient-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 1.5rem auto',
+                  boxShadow: '0 8px 30px rgba(99, 102, 241, 0.5)'
+                }}>
+                  <Volume2 size={44} color="#ffffff" />
+                </div>
+                <h3 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem' }}>
+                  Ready to Start Technical Voice Interview
+                </h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '500px', margin: '0 auto 1.5rem auto' }}>
+                  Click below to authorize audio playback and microphone input. The AI will speak the first question aloud.
+                </p>
+                <button onClick={handleStartVoiceSession} className="btn-primary" style={{ padding: '16px 36px', fontSize: '1.1rem' }}>
+                  <Play size={20} />
+                  <span>Start Voice Session Now</span>
+                </button>
               </div>
+            ) : (
+              <>
+                {/* Animated Glowing Voice Orb */}
+                <div 
+                  style={{
+                    width: '110px',
+                    height: '110px',
+                    borderRadius: '50%',
+                    background: voiceState === 'AI_SPEAKING' ? 'var(--gradient-primary)' : voiceState === 'LISTENING' ? 'linear-gradient(135deg, #22c55e, #10b981)' : 'var(--bg-surface-elevated)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 1.5rem auto',
+                    border: '3px solid var(--border-highlight)',
+                    transition: 'all 0.4s ease',
+                    boxShadow: voiceState === 'AI_SPEAKING' ? '0 0 35px rgba(99, 102, 241, 0.5)' : voiceState === 'LISTENING' ? '0 0 35px rgba(34, 197, 94, 0.5)' : 'none'
+                  }} 
+                  className={voiceState === 'AI_SPEAKING' || voiceState === 'LISTENING' ? 'voice-pulse-active' : ''}
+                >
+                  {voiceState === 'LISTENING' ? (
+                    <Mic size={52} color="#ffffff" />
+                  ) : (
+                    <Bot size={52} color={voiceState === 'AI_SPEAKING' ? '#ffffff' : 'var(--accent-indigo)'} />
+                  )}
+                </div>
+
+                <h3 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '0.4rem' }}>
+                  Interv<span className="gradient-text">AI</span> Voice Interviewer
+                </h3>
+
+                {/* Voice State Badge */}
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 18px',
+                  borderRadius: '25px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: `1px solid ${stateBanner.color}`,
+                  color: stateBanner.color,
+                  fontSize: '0.925rem',
+                  fontWeight: 700,
+                  marginBottom: '1rem'
+                }}>
+                  {stateBanner.icon}
+                  <span>{stateBanner.label}</span>
+                </div>
+
+                {/* Frequency Spectrum Waveform */}
+                {(voiceState === 'AI_SPEAKING' || voiceState === 'LISTENING') && (
+                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', height: '36px' }}>
+                    <div className="wave-bar" />
+                    <div className="wave-bar" />
+                    <div className="wave-bar" />
+                    <div className="wave-bar" />
+                    <div className="wave-bar" />
+                  </div>
+                )}
+
+                {/* Candidate Interim Live Speech View */}
+                {voiceState === 'LISTENING' && interimSpeechText && (
+                  <div style={{
+                    marginTop: '1rem',
+                    padding: '12px 18px',
+                    borderRadius: '12px',
+                    background: 'rgba(34, 197, 94, 0.08)',
+                    border: '1px solid rgba(34, 197, 94, 0.25)',
+                    color: '#22c55e',
+                    fontSize: '0.95rem',
+                    fontStyle: 'italic',
+                    maxWidth: '600px',
+                    margin: '1rem auto 0 auto'
+                  }}>
+                    "{interimSpeechText}"
+                  </div>
+                )}
+
+                {/* Action controls: Interrupt / Re-listen */}
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '1.25rem' }}>
+                  {voiceState === 'AI_SPEAKING' && (
+                    <button onClick={handleInterruptAI} className="btn-secondary" style={{ fontSize: '0.85rem' }}>
+                      <VolumeX size={16} />
+                      <span>Interrupt AI & Answer</span>
+                    </button>
+                  )}
+                  {voiceState !== 'AI_SPEAKING' && voiceState !== 'LISTENING' && (
+                    <button onClick={handleManualStartListening} className="btn-secondary" style={{ fontSize: '0.85rem' }}>
+                      <Mic size={16} color="#22c55e" />
+                      <span>Tap to Speak</span>
+                    </button>
+                  )}
+                </div>
+              </>
             )}
           </div>
 
-          {/* Live Grounded Transcript Stream */}
-          <div className="glass-panel" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', maxHeight: '420px' }}>
+          {/* Live Transcript Stream Panel */}
+          <div className="glass-panel" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', maxHeight: '380px' }}>
             <div style={{ fontSize: '0.875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-muted)', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Live Interview Transcript</span>
+              <span>Verified Interview Transcript</span>
               <span style={{ color: 'var(--accent-cyan)', fontSize: '0.75rem', textTransform: 'none' }}>Grounding Enforced</span>
             </div>
 
@@ -410,58 +493,80 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
               ))}
             </div>
 
-            {/* Candidate Voice Input / Simulation Bar */}
-            <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '10px' }}>
-              <input
-                type="text"
-                placeholder={micGranted ? "Speak into microphone or type response here..." : "Type your answer..."}
-                value={simulatedText}
-                onChange={(e) => setSimulatedText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && simulatedText.trim()) {
-                    handleCandidateResponse(simulatedText);
-                  }
-                }}
-                style={{
-                  flex: 1,
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: '10px',
-                  padding: '10px 14px',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.9rem',
-                  outline: 'none'
-                }}
-              />
-              <button
-                onClick={() => handleCandidateResponse(simulatedText)}
-                disabled={!simulatedText.trim()}
-                className="btn-primary"
-                style={{ padding: '10px 18px', fontSize: '0.875rem' }}
+            {/* Accessibility Manual Text Input Fallback (Accordion) */}
+            <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)' }}>
+              <button 
+                onClick={() => setShowAccessibilityText(!showAccessibilityText)} 
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
               >
-                <Send size={16} />
-                <span>Submit Answer</span>
+                {showAccessibilityText ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                <span>Text Fallback (For debugging / accessibility)</span>
               </button>
+
+              {showAccessibilityText && (
+                <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder="Type answer manually if microphone unavailable..."
+                    value={manualText}
+                    onChange={(e) => setManualText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && manualText.trim()) {
+                        handleCandidateFinalAnswer(manualText);
+                        setManualText('');
+                      }
+                    }}
+                    style={{
+                      flex: 1,
+                      background: 'rgba(255, 255, 255, 0.04)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      padding: '8px 12px',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.85rem'
+                    }}
+                  />
+                  <button 
+                    onClick={() => {
+                      if (manualText.trim()) {
+                        handleCandidateFinalAnswer(manualText);
+                        setManualText('');
+                      }
+                    }}
+                    className="btn-secondary"
+                    style={{ padding: '8px 14px', fontSize: '0.85rem' }}
+                  >
+                    <Send size={14} />
+                    <span>Submit</span>
+                  </button>
+                </div>
+              )}
             </div>
+
           </div>
         </div>
 
-        {/* Right Column: Grounded Context Dossier sidebar */}
+        {/* Right Sidebar: Context & Voice Status */}
         <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <h4 style={{ fontSize: '1rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-            Candidate Context Dossier
+            Voice Control & Context
           </h4>
 
-          {/* Mic Status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem', color: micGranted ? '#22c55e' : 'var(--text-muted)' }}>
-            {micGranted ? <Mic size={18} color="#22c55e" /> : <MicOff size={18} color="#f87171" />}
-            <span>{micGranted ? 'Microphone Active' : 'Voice Simulated Mode'}</span>
+          {/* Microphone Status Card */}
+          <div style={{ padding: '12px', borderRadius: '10px', background: micGranted ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)', border: `1px solid ${micGranted ? 'rgba(34, 197, 94, 0.25)' : 'rgba(239, 68, 68, 0.25)'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 700, fontSize: '0.9rem', color: micGranted ? '#22c55e' : '#f87171' }}>
+              {micGranted ? <Mic size={18} /> : <MicOff size={18} />}
+              <span>{micGranted ? 'MICROPHONE ACTIVE' : 'MICROPHONE DISABLED'}</span>
+            </div>
+            <p style={{ fontSize: '0.775rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+              {micGranted ? 'Automatic VAD turns speech into answer when you finish.' : 'Click Start Voice Session to activate microphone.'}
+            </p>
           </div>
 
-          {/* Active Projects List */}
+          {/* Grounded Projects List */}
           <div>
             <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-              Grounded Projects ({projects.length})
+              Grounded Resume Context
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {projects.map((proj, i) => (
@@ -483,10 +588,21 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
 
           <div style={{ marginTop: 'auto', padding: '10px', borderRadius: '8px', background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.2)', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
             <Sparkles size={14} color="var(--accent-indigo)" style={{ display: 'inline', marginRight: '6px' }} />
-            <span>Questions probe deeply into your actual resume claims, implementation, trade-offs, and edge cases.</span>
+            <span>AI speaks every question. Speak your answer into the microphone.</span>
           </div>
         </div>
+
       </div>
+
+      <style jsx global>{`
+        .spin {
+          animation: spin 1.2s linear infinite;
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </main>
   );
 }
