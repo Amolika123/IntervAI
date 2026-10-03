@@ -1,0 +1,107 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id         String      @id @default(uuid())
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  resumes    Resume[]
+  interviews Interview[]
+}
+
+model Resume {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fileName      String
+  rawText       String
+  parsedProfile String      // Stored as JSON string
+  createdAt     DateTime    @default(now())
+  projects      Project[]
+  interviews    Interview[]
+}
+
+model Project {
+  id                   String              @id @default(uuid())
+  resumeId             String
+  resume               Resume              @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  name                 String
+  resumeDescription    String
+  githubUrl            String?
+  githubOwner          String?
+  githubRepo           String?
+  repositoryAccessible Boolean             @default(false)
+  readmeAvailable      Boolean             @default(false)
+  contextSource        String              // "resume+github_readme", "resume+github_tree", "resume_only"
+  sources              ProjectSource[]
+  questions            InterviewQuestion[]
+  createdAt            DateTime            @default(now())
+}
+
+model ProjectSource {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceType  String   // "README", "FILE_TREE", "RESUME_TEXT"
+  content     String
+  retrievedAt DateTime @default(now())
+}
+
+model Interview {
+  id               String              @id @default(uuid())
+  userId           String
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeId         String
+  resume           Resume              @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  status           String              // "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"
+  contextVersion   String              @default("v1")
+  candidateContext String              // JSON string of aggregated CandidateContext
+  startedAt        DateTime?
+  endedAt          DateTime?
+  createdAt        DateTime            @default(now())
+  questions        InterviewQuestion[]
+  answers          InterviewAnswer[]
+  evaluation       Evaluation?
+}
+
+model InterviewQuestion {
+  id              String           @id @default(uuid())
+  interviewId     String
+  interview       Interview        @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  projectId       String?
+  project         Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  order           Int
+  questionText    String
+  groundingSource String           // e.g. "project:FakeNewsDetection:README"
+  createdAt       DateTime         @default(now())
+  answer          InterviewAnswer?
+}
+
+model InterviewAnswer {
+  id          String            @id @default(uuid())
+  interviewId String
+  interview   Interview         @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  questionId  String            @unique
+  question    InterviewQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  transcript  String
+  evaluation  String?           // JSON string
+  createdAt   DateTime          @default(now())
+}
+
+model Evaluation {
+  id                String    @id @default(uuid())
+  interviewId       String    @unique
+  interview         Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  overallScore      Int       // 0 to 100
+  overallAssessment String
+  strengths         String    // JSON string array
+  areasToImprove    String    // JSON string array
+  questionBreakdown String    // JSON string array
+  createdAt         DateTime  @default(now())
+}
