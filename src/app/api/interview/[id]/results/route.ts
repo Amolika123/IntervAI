@@ -50,6 +50,7 @@ export async function GET(
       interview: {
         id: interview.id,
         status: interview.status,
+        style: interview.style,
         startedAt: interview.startedAt,
         endedAt: interview.endedAt,
         createdAt: interview.createdAt

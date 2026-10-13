@@ -62,6 +62,7 @@ model Interview {
   status           String              // "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"
   contextVersion   String              @default("v1")
   candidateContext String              // JSON string of aggregated CandidateContext
+  style            String              @default("FAANG") // "FAANG" | "MANGOS" | "BIG_4"
   startedAt        DateTime?
   endedAt          DateTime?
   createdAt        DateTime            @default(now())

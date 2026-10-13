@@ -20,7 +20,8 @@ export async function POST(req: Request) {
     }
 
     const candidateContext = JSON.parse(interview.candidateContext);
-    const systemPrompt = buildInterviewerSystemPrompt(candidateContext);
+    const style = interview.style || 'FAANG';
+    const systemPrompt = buildInterviewerSystemPrompt(candidateContext, style);
 
     const apiKey = process.env.OPENAI_API_KEY;
 
@@ -31,7 +32,8 @@ export async function POST(req: Request) {
         mockMode: true,
         clientSecret: 'mock_ephemeral_token_dev',
         systemInstructions: systemPrompt,
-        candidateContext
+        candidateContext,
+        style
       });
     }
 
@@ -84,7 +86,8 @@ export async function POST(req: Request) {
       clientSecret: sessionData.client_secret?.value || sessionData.id,
       sessionData,
       systemInstructions: systemPrompt,
-      candidateContext
+      candidateContext,
+      style
     });
 
   } catch (error) {

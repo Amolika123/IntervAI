@@ -21,10 +21,10 @@ The interviewer conducts a live voice conversation—speaking every question alo
 ## 🚀 Key Highlights & Differentiators
 
 * 🎯 **100% Resume-Grounded Probing:** Zero generic quiz questions. Every question directly references explicit resume claims, project descriptions, GitHub README content, or candidate responses.
+* 🏢 **Selectable Company-Specific Interview Styles:** Three configurable presets (**FAANG**, **MANGOS**, **Big 4**) calibrate *how* the interviewer probes depth, architecture, and reliability, while keeping content 100% grounded in candidate experience.
 * 🐙 **GitHub Repository Deep Dive:** Automatically validates public GitHub URLs, extracts repository metadata, parses `README.md`, and retrieves codebase file tree structure.
 * 🎙️ **Voice-First Interactive Experience:** Speaks every question aloud via Text-to-Speech (`/api/tts` & Web Speech API) and listens through candidate microphone with automated 1.8s silence VAD turn detection.
-* 🏛️ **Big-Tech Interview Patterns:** Probing levels inspired by Google, Amazon, Meta, Microsoft, Apple, OpenAI, and Big Four technical interviews (Overview $\rightarrow$ Implementation $\rightarrow$ Architecture/Design Choice $\rightarrow$ Alternatives/Trade-offs $\rightarrow$ Failure/Edge Cases $\rightarrow$ Scalability/Performance).
-* 📊 **Comprehensive AI Evaluation Report:** Generates an overall technical score (0–100), key strengths, areas for improvement, and detailed question-by-question grounded feedback.
+* 📊 **Comprehensive AI Evaluation Report:** Generates an overall technical score (0–100), key strengths, areas for improvement, per-question grounded feedback, and displays the interview style preset calibration.
 
 ---
 
@@ -34,9 +34,10 @@ The interviewer conducts a live voice conversation—speaking every question alo
 flowchart TD
     subgraph Client ["Client Layer (Next.js React Frontend)"]
         Landing["Landing Page (PDF Upload Dropzone)"]
-        Processing["Processing View (Progress Animation)"]
-        VoiceUI["Live Technical Voice Interview"]
-        ResultsUI["Evaluation Report & Score Dashboard"]
+        Processing["Processing View (Context Aggregation)"]
+        StyleSelector["Interview Style Preset Selector (FAANG / MANGOS / Big 4)"]
+        VoiceUI["Live Technical Voice Interview (Audio TTS + Mic VAD)"]
+        ResultsUI["Evaluation Report & Score Dashboard (Style Badge & Analysis)"]
     end
 
     subgraph CoreEngine ["Backend Engine Services"]
@@ -44,15 +45,16 @@ flowchart TD
         NLPParser["OpenAI Structured NLP Profile Parser"]
         GHService["GitHub REST API Inspector (README + Repo Tree)"]
         ContextAggregator["Candidate Context Aggregator"]
-        GroundedPrompt["Grounded System Prompt Generator"]
+        StyleConfig["Configurable Interview Presets (INTERVIEW_STYLES)"]
+        GroundedPrompt["Grounded System Prompt Generator (Context + Style Directives)"]
         VoiceEngine["Audio TTS & Web Speech VAD Engine"]
         EvalEngine["AI Technical Evaluator Engine"]
-      end
+    end
 
     subgraph DataStorage ["Data & APIs"]
         OpenAI["OpenAI API (GPT-4o & TTS)"]
         GitHub["GitHub REST API"]
-        DB[("Database (Prisma / SQLite / PostgreSQL)")]
+        DB[("Database (Prisma / SQLite: dev.db)")]
     end
 
     Landing -->|PDF Resume Upload| PDFExtract
@@ -64,9 +66,12 @@ flowchart TD
     ContextAggregator --> DB
     ContextAggregator --> Processing
 
-    Processing --> VoiceUI
+    Processing --> StyleSelector
+    StyleSelector -->|Selected Style Preset| DB
+    StyleSelector --> VoiceUI
+
     VoiceUI <-->|Audio TTS & Mic VAD| VoiceEngine
-    VoiceEngine <-->|Synthesize Question Audio| OpenAI
+    VoiceEngine <-->|Synthesize Spoken Audio| OpenAI
     VoiceUI -->|Persist Spoken Turns| DB
 
     VoiceUI -->|End Interview| EvalEngine
@@ -98,6 +103,19 @@ Located in [`src/lib/voice/speechEngine.ts`](file:///c:/Users/amoli/OneDrive/Des
 - **Microphone Input:** SpeechRecognition STT capturing candidate answer in real-time.
 - **VAD Turn Detection:** 1.8 seconds of silence after candidate speaks automatically finalizes transcript, transitions state to `PROCESSING_ANSWER`, and submits to backend.
 
+### 4. Selectable Company-Specific Technical Interview Styles
+Configured centrally in [`src/lib/interviewer/styles.ts`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/lib/interviewer/styles.ts):
+After resume analysis and before the interview begins, the candidate selects their desired interview style preset. The selection dictates **how** the AI probes, while the candidate's resume and GitHub projects dictate **what** is asked:
+
+| Preset | Companies Included | Focus & Probing Emphasis | Example Grounded Question Angle (e.g., RAG Project) |
+| :--- | :--- | :--- | :--- |
+| **FAANG** | Meta, Amazon, Apple, Netflix, Google | Technical depth, algorithmic complexity, memory/runtime efficiency, low-level mechanics, boundary edge cases. | Chunking algorithm complexity, vector index runtime bounds, retrieval latency, boundary input handling. |
+| **MANGOS** | Meta, Anthropic, NVIDIA, Google, OpenAI, SpaceX | Deep technical reasoning, AI/ML concepts, distributed system architecture, failure scenarios, performance trade-offs. | Embedding model trade-offs, vector DB scaling bottlenecks, pipeline failure modes under upstream timeouts. |
+| **Big 4** | Deloitte, PwC, EY, KPMG | Practical software engineering, database schemas & indexing, API contracts, error handling, production debugging, reliability. | Relational database modeling, query indexing, API schema contracts, production logging, data consistency. |
+
+* **Strict Grounding:** Candidates never select an isolated topic. No HR or behavioral questions are introduced; all three styles remain strictly technical.
+* **Session Persistence:** The selected style is stored in the database (`Interview.style`), persists across session reconnects, guides dynamic follow-up evaluations, and appears in the final evaluation report.
+
 ---
 
 ## 🗄️ Database Schema (Prisma)
@@ -113,13 +131,14 @@ Managed via [`prisma/schema.prisma`](file:///c:/Users/amoli/OneDrive/Desktop/Int
         v                                  v                                   v
 +----------------+                 +----------------+                 +-----------------+
 |   Interview    |<----------------| ProjectSource  |                 |InterviewQuestion|
-+----------------+                 +----------------+                 +-----------------+
-  |        |                                                                   |
-  | 1:1    | 1:N                                                               | 1:1
-  v        v                                                                   v
-+----+  +---------------+                                             +-----------------+
-|Eval|  |InterviewAnswer|<--------------------------------------------|InterviewAnswer  |
-+----+  +---------------+                                             +-----------------+
+| (style: FAANG) |                 +----------------+                 +-----------------+
++----------------+                                                             |
+  |        |                                                                   | 1:1
+  | 1:1    | 1:N                                                               v
+  v        v                                                          +-----------------+
++----+  +---------------+                                             | InterviewAnswer |
+|Eval|  |InterviewAnswer|<--------------------------------------------+-----------------+
++----+  +---------------+
 ```
 
 ---
@@ -129,12 +148,12 @@ Managed via [`prisma/schema.prisma`](file:///c:/Users/amoli/OneDrive/Desktop/Int
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
 | `/api/resume/upload` | `POST` | Uploads PDF resume, extracts text, executes NLP parsing, inspects GitHub repos, saves DB models. |
-| `/api/interview/start` | `POST` | Compiles CandidateContext and initializes `Interview` record. |
-| `/api/interview/session` | `POST` | Returns session configuration and system instructions. |
+| `/api/interview/start` | `POST` | Accepts `{ resumeId, style }`, compiles CandidateContext, and initializes `Interview` with selected style. |
+| `/api/interview/session` | `POST` | Returns session configuration, system instructions tailored to selected style, and active style preset. |
 | `/api/interview/answer` | `POST` | Persists a single question & candidate transcript turn to DB. |
 | `/api/tts` | `POST` | Generates MP3 audio for AI spoken questions using OpenAI TTS. |
 | `/api/interview/end` | `POST` | Finalizes interview and triggers AI Evaluation Engine. |
-| `/api/interview/[id]/results` | `GET` | Fetches overall score, strengths, areas for improvement, per-question analysis, and transcript. |
+| `/api/interview/[id]/results` | `GET` | Fetches overall score, style preset, strengths, areas for improvement, per-question analysis, and transcript. |
 
 ---
 

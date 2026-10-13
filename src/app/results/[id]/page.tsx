@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, use } from 'react';
 import { useRouter } from 'next/navigation';
-import { Award, CheckCircle2, AlertTriangle, ArrowLeft, RotateCcw, Cpu, FileText, GitBranch, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { Award, CheckCircle2, AlertTriangle, ArrowLeft, RotateCcw, Cpu, FileText, GitBranch, Sparkles, ChevronDown, ChevronUp, Layers } from 'lucide-react';
+import { INTERVIEW_STYLES, InterviewStyleId } from '@/lib/interviewer/styles';
 
 interface ResultsPageProps {
   params: Promise<{ id: string }>;
@@ -71,11 +72,13 @@ export default function ResultsPage({ params }: ResultsPageProps) {
 
   const { candidate, evaluation, transcript, projects } = data;
   const overallScore = evaluation?.overallScore ?? 85;
+  const activeStyleKey = (data?.interview?.style || 'FAANG') as InterviewStyleId;
+  const styleConfig = INTERVIEW_STYLES[activeStyleKey] || INTERVIEW_STYLES.FAANG;
 
   return (
     <main style={{ minHeight: '100vh', padding: '2.5rem 1.5rem', maxWidth: '1100px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       {/* Top Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <button onClick={() => router.push('/')} className="btn-secondary" style={{ marginBottom: '0.75rem', padding: '8px 14px', fontSize: '0.85rem' }}>
             <ArrowLeft size={16} />
@@ -86,9 +89,28 @@ export default function ResultsPage({ params }: ResultsPageProps) {
           </h1>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(99, 102, 241, 0.1)', padding: '8px 16px', borderRadius: '20px', border: '1px solid rgba(99, 102, 241, 0.2)', fontSize: '0.85rem', color: 'var(--accent-indigo)' }}>
-          <Sparkles size={16} />
-          <span>AI-Assisted Decision Support</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Interview Style Badge */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: `${styleConfig.color}15`,
+            border: `1px solid ${styleConfig.color}45`,
+            padding: '8px 16px',
+            borderRadius: '20px',
+            fontSize: '0.85rem',
+            color: styleConfig.color,
+            fontWeight: 600,
+          }}>
+            <Layers size={16} />
+            <span>{styleConfig.name} Style Preset</span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(99, 102, 241, 0.1)', padding: '8px 16px', borderRadius: '20px', border: '1px solid rgba(99, 102, 241, 0.2)', fontSize: '0.85rem', color: 'var(--accent-indigo)' }}>
+            <Sparkles size={16} />
+            <span>AI-Assisted Decision Support</span>
+          </div>
         </div>
       </header>
 
@@ -122,14 +144,38 @@ export default function ResultsPage({ params }: ResultsPageProps) {
             {evaluation?.overallAssessment || 'Candidate demonstrated grounded knowledge across stated resume skills and public GitHub repository projects.'}
           </p>
 
-          <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
-            <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+            <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '8px 14px', borderRadius: '10px', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
               <span style={{ color: 'var(--text-muted)' }}>Projects Grounded: </span>
               <strong style={{ color: 'var(--accent-cyan)' }}>{projects?.length || 0}</strong>
             </div>
-            <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
+            <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '8px 14px', borderRadius: '10px', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
               <span style={{ color: 'var(--text-muted)' }}>Questions Probed: </span>
               <strong style={{ color: 'var(--accent-purple)' }}>{transcript?.length || 0}</strong>
+            </div>
+            <div style={{ background: `${styleConfig.color}10`, padding: '8px 14px', borderRadius: '10px', border: `1px solid ${styleConfig.color}35`, fontSize: '0.85rem' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Interview Style: </span>
+              <strong style={{ color: styleConfig.color }}>{styleConfig.name}</strong>
+            </div>
+          </div>
+
+          {/* Style Context Callout */}
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.02)',
+            border: `1px solid ${styleConfig.color}25`,
+            borderRadius: '10px',
+            padding: '12px 16px',
+            fontSize: '0.85rem',
+            lineHeight: 1.5,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+              <span style={{ fontWeight: 700, color: styleConfig.color }}>{styleConfig.name} Probing Calibration:</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                ({styleConfig.companies.join(', ')})
+              </span>
+            </div>
+            <div style={{ color: 'var(--text-secondary)' }}>
+              {styleConfig.tagline}
             </div>
           </div>
         </div>

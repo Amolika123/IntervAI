@@ -6,11 +6,13 @@ import { buildCandidateContext } from '@/lib/context/candidateContextBuilder';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { resumeId } = body;
+    const { resumeId, style } = body;
 
     if (!resumeId) {
       return NextResponse.json({ error: 'resumeId is required' }, { status: 400 });
     }
+
+    const validStyle = style && ['FAANG', 'MANGOS', 'BIG_4'].includes(style) ? style : 'FAANG';
 
     const resume = await db.resume.findUnique({
       where: { id: resumeId },
@@ -30,6 +32,7 @@ export async function POST(req: Request) {
         userId: resume.userId,
         resumeId: resume.id,
         status: 'CREATED',
+        style: validStyle,
         candidateContext: JSON.stringify(candidateContext)
       }
     });
@@ -37,6 +40,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       interviewId: interview.id,
+      style: interview.style,
       candidateContext
     });
 

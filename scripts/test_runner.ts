@@ -69,11 +69,44 @@ async function runSystemIntegrityTests() {
 
   // TEST 4: Grounded Prompt Rule Validation
   console.log('\n--- Test 4: System Prompt Grounding Guardrails ---');
-  const promptText = buildInterviewerSystemPrompt(context);
-  assert(promptText.includes('CRITICAL GROUNDING RULES'), 'Includes mandatory grounding rules header');
-  assert(promptText.includes('Fake News Detection System'), 'Includes candidate project name');
-  assert(promptText.includes('ChromaDB'), 'Includes candidate technology claim');
-  assert(promptText.includes('DO NOT ASK UNGROUNDED GENERIC CS TRIVIA'), 'Includes explicit anti-trivia guardrail');
+  const defaultPromptText = buildInterviewerSystemPrompt(context);
+  assert(defaultPromptText.includes('CRITICAL GROUNDING RULES'), 'Includes mandatory grounding rules header');
+  assert(defaultPromptText.includes('Fake News Detection System'), 'Includes candidate project name');
+  assert(defaultPromptText.includes('ChromaDB'), 'Includes candidate technology claim');
+  assert(defaultPromptText.includes('DO NOT ASK UNGROUNDED GENERIC CS TRIVIA'), 'Includes explicit anti-trivia guardrail');
+
+  // TEST 5: FAANG Style Preset Validation
+  console.log('\n--- Test 5: FAANG Style Preset Directives ---');
+  const faangPrompt = buildInterviewerSystemPrompt(context, 'FAANG');
+  assert(faangPrompt.includes('STYLE PRESET: FAANG'), 'Identifies FAANG preset header');
+  assert(faangPrompt.includes('Meta, Amazon, Apple, Netflix, Google'), 'Lists official FAANG companies');
+  assert(faangPrompt.includes('Technical Depth, Algorithms, Complexity'), 'Emphasizes algorithms and computational complexity');
+  assert(faangPrompt.includes('Fake News Detection System'), 'Maintains candidate project grounding in FAANG style');
+  assert(faangPrompt.includes('ChromaDB'), 'Maintains candidate technology grounding in FAANG style');
+
+  // TEST 6: MANGOS Style Preset Validation
+  console.log('\n--- Test 6: MANGOS Style Preset Directives ---');
+  const mangosPrompt = buildInterviewerSystemPrompt(context, 'MANGOS');
+  assert(mangosPrompt.includes('STYLE PRESET: MANGOS'), 'Identifies MANGOS preset header');
+  assert(mangosPrompt.includes('Meta, Anthropic, NVIDIA, Google, OpenAI, SpaceX'), 'Lists official MANGOS companies');
+  assert(mangosPrompt.includes('Architectural Reasoning, AI/ML & Systems Concepts'), 'Emphasizes AI/ML, architecture, and system trade-offs');
+  assert(mangosPrompt.includes('Fake News Detection System'), 'Maintains candidate project grounding in MANGOS style');
+  assert(mangosPrompt.includes('ChromaDB'), 'Maintains candidate technology grounding in MANGOS style');
+
+  // TEST 7: Big 4 Style Preset Validation
+  console.log('\n--- Test 7: Big 4 Style Preset Directives ---');
+  const big4Prompt = buildInterviewerSystemPrompt(context, 'BIG_4');
+  assert(big4Prompt.includes('STYLE PRESET: BIG 4'), 'Identifies Big 4 preset header');
+  assert(big4Prompt.includes('Deloitte, PwC, EY, KPMG'), 'Lists official Big 4 companies');
+  assert(big4Prompt.includes('Practical Software Engineering, Databases, APIs, Debugging'), 'Emphasizes practical SE, databases, APIs & debugging');
+  assert(big4Prompt.includes('Fake News Detection System'), 'Maintains candidate project grounding in Big 4 style');
+  assert(big4Prompt.includes('ChromaDB'), 'Maintains candidate technology grounding in Big 4 style');
+
+  // TEST 8: Distinct Probing Differentiators
+  console.log('\n--- Test 8: Probing Strategy Differentiation ---');
+  assert(faangPrompt !== mangosPrompt, 'FAANG and MANGOS prompts produce distinct directives');
+  assert(mangosPrompt !== big4Prompt, 'MANGOS and Big 4 prompts produce distinct directives');
+  assert(faangPrompt !== big4Prompt, 'FAANG and Big 4 prompts produce distinct directives');
 
   console.log('\n==================================================');
   console.log(`TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
