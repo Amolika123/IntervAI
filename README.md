@@ -116,6 +116,16 @@ After resume analysis and before the interview begins, the candidate selects the
 * **Strict Grounding:** Candidates never select an isolated topic. No HR or behavioral questions are introduced; all three styles remain strictly technical.
 * **Session Persistence:** The selected style is stored in the database (`Interview.style`), persists across session reconnects, guides dynamic follow-up evaluations, and appears in the final evaluation report.
 
+### 5. Cinematic Motion Landing Page & Visual Identity
+Designed to deliver a premium, futuristic AI technology aesthetic rather than a generic recruitment board:
+* **Color Palette & Tokens:** Defined in [`src/app/globals.css`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/app/globals.css) via HSL variables: Background `260 87% 3%`, Foreground `40 6% 95%`, Secondary `40 6% 82%`, and multi-stop accents (Indigo `#6366f1`, Violet `#a855f7`, Cyan `#22d3ee`).
+* **Typography:** General Sans for bold, fluid headlines (`clamp(3rem, 7.5vw, 6rem)` with letter spacing `-0.035em` and line height `1.02`), paired with Geist Sans for clear body text.
+* **Full-Viewport Video Background:** Full-viewport hero (`min-height: 100svh`) with looping video background powered by a `requestAnimationFrame` controller (smooth 0.5s fade-in, 0.5s fade-out near loop end, 100ms reset cycle, and fallback for `prefers-reduced-motion`).
+* **Centered Headline Backdrop Blur:** Separate centered blurred shape (`.hero-headline-backdrop` with `backdrop-filter: blur(36px)`) behind the headline ensuring contrast without applying a full gradient overlay on top of the video.
+* **Capabilities Marquee:** Pinned near the bottom of the hero with a fixed `"BUILT AROUND YOUR EXPERIENCE"` badge and a seamless 20s infinite loop of product capability tiles with abstract symbols.
+* **Liquid Glass Effect:** Reusable `.liquid-glass` utility class featuring translucent surfaces, backdrop blur, inset highlights, and hover transitions.
+* **Below-the-Fold Exploration:** Modular sections for `#how-it-works` (6-step pipeline), `#interview-styles` (FAANG, MANGOS, Big 4 cards), and `#features` (architectural differentiators), leading into the resume upload flow.
+
 ---
 
 ## 🗄️ Database Schema (Prisma)
