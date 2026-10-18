@@ -4,9 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:backend": "uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload",
+    "dev:all": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue,green\" \"npm run dev:backend\" \"npm run dev\"",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "pytest backend/tests",
+    "test:backend": "pytest backend/tests"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -24,6 +28,7 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.6",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "prisma": "^5.22.0",

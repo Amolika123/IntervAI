@@ -1,41 +1,22 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+
+const PYTHON_API_BASE_URL = process.env.PYTHON_API_BASE_URL || 'http://127.0.0.1:8000';
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { interviewId, order, questionText, groundingSource, transcript, projectId } = body;
 
-    if (!interviewId || !questionText || !transcript) {
-      return NextResponse.json({ error: 'Missing required fields (interviewId, questionText, transcript)' }, { status: 400 });
-    }
-
-    const question = await db.interviewQuestion.create({
-      data: {
-        interviewId,
-        order: order || 1,
-        questionText,
-        groundingSource: groundingSource || 'resume:general',
-        projectId: projectId || null
-      }
+    const res = await fetch(`${PYTHON_API_BASE_URL}/api/interview/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
 
-    const answer = await db.interviewAnswer.create({
-      data: {
-        interviewId,
-        questionId: question.id,
-        transcript
-      }
-    });
-
-    return NextResponse.json({
-      success: true,
-      questionId: question.id,
-      answerId: answer.id
-    });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
 
   } catch (error) {
-    console.error('Save answer endpoint error:', error);
+    console.error('Save answer proxy error:', error);
     return NextResponse.json({ error: 'Failed to persist interview turn' }, { status: 500 });
   }
 }

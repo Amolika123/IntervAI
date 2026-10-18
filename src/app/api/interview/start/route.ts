@@ -1,51 +1,22 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { CandidateProfile } from '@/lib/nlp/resumeParser';
-import { buildCandidateContext } from '@/lib/context/candidateContextBuilder';
+
+const PYTHON_API_BASE_URL = process.env.PYTHON_API_BASE_URL || 'http://127.0.0.1:8000';
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { resumeId, style } = body;
 
-    if (!resumeId) {
-      return NextResponse.json({ error: 'resumeId is required' }, { status: 400 });
-    }
-
-    const validStyle = style && ['FAANG', 'MANGOS', 'BIG_4'].includes(style) ? style : 'FAANG';
-
-    const resume = await db.resume.findUnique({
-      where: { id: resumeId },
-      include: { projects: { include: { sources: true } } }
+    const res = await fetch(`${PYTHON_API_BASE_URL}/api/interview/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
 
-    if (!resume) {
-      return NextResponse.json({ error: 'Resume record not found' }, { status: 404 });
-    }
-
-    const parsedProfile: CandidateProfile = JSON.parse(resume.parsedProfile);
-    const candidateContext = await buildCandidateContext(parsedProfile);
-
-    // Create interview record
-    const interview = await db.interview.create({
-      data: {
-        userId: resume.userId,
-        resumeId: resume.id,
-        status: 'CREATED',
-        style: validStyle,
-        candidateContext: JSON.stringify(candidateContext)
-      }
-    });
-
-    return NextResponse.json({
-      success: true,
-      interviewId: interview.id,
-      style: interview.style,
-      candidateContext
-    });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
 
   } catch (error) {
-    console.error('Start interview endpoint error:', error);
+    console.error('Start interview proxy error:', error);
     return NextResponse.json({ error: 'Failed to start interview session' }, { status: 500 });
   }
 }

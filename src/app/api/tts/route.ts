@@ -1,39 +1,34 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
+
+const PYTHON_API_BASE_URL = process.env.PYTHON_API_BASE_URL || 'http://127.0.0.1:8000';
 
 export async function POST(req: Request) {
   try {
-    const { text } = await req.json();
+    const body = await req.json();
 
-    if (!text) {
-      return NextResponse.json({ error: 'Text is required for TTS' }, { status: 400 });
-    }
-
-    const apiKey = process.env.OPENAI_API_KEY;
-
-    if (!apiKey) {
-      // Signal client to use Web Speech API (window.speechSynthesis)
-      return NextResponse.json({ fallback: true });
-    }
-
-    const openai = new OpenAI({ apiKey });
-    const mp3 = await openai.audio.speech.create({
-      model: 'tts-1',
-      voice: 'alloy',
-      input: text.slice(0, 1000), // Cap length for fast low-latency streaming
+    const res = await fetch(`${PYTHON_API_BASE_URL}/api/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
 
-    const buffer = Buffer.from(await mp3.arrayBuffer());
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('audio/mpeg')) {
+      const buffer = await res.arrayBuffer();
+      return new NextResponse(buffer, {
+        status: res.status,
+        headers: {
+          'Content-Type': 'audio/mpeg',
+          'Content-Length': buffer.byteLength.toString(),
+        },
+      });
+    }
 
-    return new NextResponse(buffer, {
-      headers: {
-        'Content-Type': 'audio/mpeg',
-        'Content-Length': buffer.length.toString(),
-      },
-    });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
 
   } catch (error) {
-    console.warn('OpenAI TTS endpoint error, falling back to Web Speech API:', error);
+    console.warn('TTS proxy error, signaling Web Speech API fallback:', error);
     return NextResponse.json({ fallback: true });
   }
 }

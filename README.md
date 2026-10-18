@@ -3,18 +3,99 @@
 > **"Upload your resume. IntervAI understands your projects and conducts a real-time technical voice interview about your own experience."**
 
 [![Next.js](https://img.shields.io/badge/Next.js-16.3.8-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o%20%7C%20Realtime-412991?style=for-the-badge&logo=openai&logoColor=white)](https://platform.openai.com/)
-[![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
-[![GitHub API](https://img.shields.io/badge/GitHub-REST_API-181717?style=for-the-badge&logo=github&logoColor=white)](https://docs.github.com/en/rest)
+[![OpenAI](https://img.shields.io/badge/OpenAI-Python_SDK-412991?style=for-the-badge&logo=openai&logoColor=white)](https://platform.openai.com/)
+[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-ORM-D71F00?style=for-the-badge&logo=sqlalchemy&logoColor=white)](https://www.sqlalchemy.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-dev.db-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 
 ---
 
 ## 🌟 Executive Overview
 
-**IntervAI** is a full-stack, voice-first AI technical interviewer designed to eliminate generic textbook mock interview questions. Instead of selecting broad topics like DSA, DBMS, or NLP, IntervAI inspects the candidate's actual PDF resume and publicly linked GitHub repositories (extracting `README.md` documentation and codebase file structure) to build a normalized **Candidate Context Dossier**.
+**IntervAI** is a hybrid full-stack, voice-first AI technical interviewer designed to eliminate generic textbook mock interview questions. Instead of selecting broad topics like DSA, DBMS, or NLP, IntervAI inspects the candidate's actual PDF resume and publicly linked GitHub repositories (extracting `README.md` documentation and codebase file structure) to build a normalized **Candidate Context Dossier**.
 
 The interviewer conducts a live voice conversation—speaking every question aloud and using automatic Voice Activity Detection (VAD) to listen to candidate answers through the microphone—probing system architecture, design trade-offs, edge cases, and scalability.
+
+---
+
+## 🏗️ Architecture: Next.js Frontend + FastAPI Python Backend
+
+IntervAI operates as a high-performance **hybrid architecture**:
+
+- **Frontend & Browser Layer (Next.js 16 + React 19 + TypeScript):** Handles cinematic motion UI, resume upload dropzones, company style selection cards, live audio playback, Web Speech API speech-to-text, and microphone turn detection (VAD).
+- **Backend Business Logic Layer (Python 3.11+ + FastAPI + SQLAlchemy):** Authoritative server-side intelligence handling multi-strategy PDF parsing (`pypdf` + `pdfplumber`), GitHub repository inspection (`httpx`), grounded system prompt generation, company style directives, OpenAI SDK structured parsing and evaluations, TTS audio synthesis, and database operations.
+- **Transparent API Proxying:** The existing Next.js API routes under `src/app/api/` act as lightweight TypeScript proxy handlers forwarding client requests to the FastAPI backend (`http://127.0.0.1:8000`), preserving all existing frontend API contracts, status codes, multipart file uploads, and binary audio streaming.
+- **Database Layer (SQLite + SQLAlchemy):** Existing database contents and schema in `prisma/dev.db` are preserved without resets or data loss. SQLAlchemy models map directly to the Prisma schema using a custom `PrismaDateTime` TypeDecorator to handle integer millisecond timestamps safely.
+
+```mermaid
+flowchart TD
+    subgraph Client ["Frontend Layer (Next.js 16 / React 19 / TypeScript)"]
+        UI["Landing & Upload UI"]
+        StyleSelector["Style Preset Selector (FAANG / MANGOS / Big 4)"]
+        VoiceEngine["Voice Engine (SpeechRecognition & Audio Playback)"]
+        ResultsUI["Results & Evaluation Dashboard"]
+    end
+
+    subgraph ProxyLayer ["Next.js API Proxy Handlers (src/app/api/*)"]
+        P_Upload["/api/resume/upload"]
+        P_Start["/api/interview/start"]
+        P_Session["/api/interview/session"]
+        P_Answer["/api/interview/answer"]
+        P_End["/api/interview/end"]
+        P_Results["/api/interview/:id/results"]
+        P_TTS["/api/tts"]
+    end
+
+    subgraph BackendEngine ["Authoritative Python Backend (FastAPI / backend/app)"]
+        FastAPI_Router["FastAPI Application (Port 8000)"]
+        PDFParser["Resume Parser (pypdf + pdfplumber + OpenAI)"]
+        GHService["GitHub Service (httpx async REST)"]
+        ContextBuilder["Candidate Context Aggregator"]
+        SystemPrompt["Grounded Prompt Engine (Anti-Trivia Guardrails)"]
+        StylesConfig["Interview Styles Config (FAANG, MANGOS, Big 4)"]
+        Evaluator["Evaluation Engine (0-100 Score & Breakdown)"]
+        TTSService["TTS Audio Generator (OpenAI Audio)"]
+        SQLAModels["SQLAlchemy ORM (PrismaDateTime Compatibility)"]
+    end
+
+    subgraph Storage ["Database & External Services"]
+        SQLite[("SQLite Database: prisma/dev.db")]
+        OpenAI["OpenAI API (GPT-4o & TTS-1)"]
+        GitHub["GitHub REST API"]
+    end
+
+    UI --> P_Upload
+    StyleSelector --> P_Start
+    VoiceEngine --> P_Session
+    VoiceEngine --> P_Answer
+    VoiceEngine --> P_TTS
+    VoiceEngine --> P_End
+    ResultsUI --> P_Results
+
+    P_Upload --> FastAPI_Router
+    P_Start --> FastAPI_Router
+    P_Session --> FastAPI_Router
+    P_Answer --> FastAPI_Router
+    P_End --> FastAPI_Router
+    P_Results --> FastAPI_Router
+    P_TTS --> FastAPI_Router
+
+    FastAPI_Router --> PDFParser
+    FastAPI_Router --> GHService
+    FastAPI_Router --> ContextBuilder
+    FastAPI_Router --> SystemPrompt
+    FastAPI_Router --> Evaluator
+    FastAPI_Router --> TTSService
+    FastAPI_Router --> SQLAModels
+
+    PDFParser <--> OpenAI
+    Evaluator <--> OpenAI
+    TTSService <--> OpenAI
+    GHService <--> GitHub
+    SQLAModels <--> SQLite
+```
 
 ---
 
@@ -28,74 +109,21 @@ The interviewer conducts a live voice conversation—speaking every question alo
 
 ---
 
-## 📐 System Architecture & Flow
-
-```mermaid
-flowchart TD
-    subgraph Client ["Client Layer (Next.js React Frontend)"]
-        Landing["Landing Page (PDF Upload Dropzone)"]
-        Processing["Processing View (Context Aggregation)"]
-        StyleSelector["Interview Style Preset Selector (FAANG / MANGOS / Big 4)"]
-        VoiceUI["Live Technical Voice Interview (Audio TTS + Mic VAD)"]
-        ResultsUI["Evaluation Report & Score Dashboard (Style Badge & Analysis)"]
-    end
-
-    subgraph CoreEngine ["Backend Engine Services"]
-        PDFExtract["Multi-Strategy PDF Extractor (unpdf + pdf-parse + raw stream)"]
-        NLPParser["OpenAI Structured NLP Profile Parser"]
-        GHService["GitHub REST API Inspector (README + Repo Tree)"]
-        ContextAggregator["Candidate Context Aggregator"]
-        StyleConfig["Configurable Interview Presets (INTERVIEW_STYLES)"]
-        GroundedPrompt["Grounded System Prompt Generator (Context + Style Directives)"]
-        VoiceEngine["Audio TTS & Web Speech VAD Engine"]
-        EvalEngine["AI Technical Evaluator Engine"]
-    end
-
-    subgraph DataStorage ["Data & APIs"]
-        OpenAI["OpenAI API (GPT-4o & TTS)"]
-        GitHub["GitHub REST API"]
-        DB[("Database (Prisma / SQLite: dev.db)")]
-    end
-
-    Landing -->|PDF Resume Upload| PDFExtract
-    PDFExtract --> NLPParser
-    NLPParser <-->|Structured JSON Schema| OpenAI
-    NLPParser --> GHService
-    GHService <-->|Public Repos & README| GitHub
-    GHService & NLPParser --> ContextAggregator
-    ContextAggregator --> DB
-    ContextAggregator --> Processing
-
-    Processing --> StyleSelector
-    StyleSelector -->|Selected Style Preset| DB
-    StyleSelector --> VoiceUI
-
-    VoiceUI <-->|Audio TTS & Mic VAD| VoiceEngine
-    VoiceEngine <-->|Synthesize Spoken Audio| OpenAI
-    VoiceUI -->|Persist Spoken Turns| DB
-
-    VoiceUI -->|End Interview| EvalEngine
-    EvalEngine <-->|Generate Score & Feedback| OpenAI
-    EvalEngine --> DB
-    EvalEngine --> ResultsUI
-```
-
----
-
 ## 🛠️ Feature Deep Dive
 
 ### 1. Multi-Strategy PDF Text Extractor
-Located in [`src/lib/nlp/resumeParser.ts`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/lib/nlp/resumeParser.ts), text extraction uses a 3-tier fallback hierarchy ensuring 100% extraction reliability across all PDF versions:
-1. **Stage 1 (Primary):** `unpdf` (Modern PDF.js engine without native canvas bindings).
-2. **Stage 2 (Secondary):** `pdf-parse/lib/pdf-parse.js` direct engine fallback.
-3. **Stage 3 (Tertiary):** Raw binary stream string object extractor.
+Located in [`backend/app/services/resume_parser.py`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/backend/app/services/resume_parser.py), text extraction uses a robust multi-strategy fallback hierarchy:
+1. **Stage 1 (Primary):** `pypdf` fast stream reader.
+2. **Stage 2 (Secondary):** `pdfplumber` layout-aware text extractor for complex PDF documents.
+3. **Stage 3 (Tertiary):** Raw regex-based text stream extraction.
+4. **Structured Profile Parsing:** Extracted text is transformed into a structured candidate profile using OpenAI structured outputs (`gpt-4o`) with fallback to a deterministic rule-based extractor.
 
 ### 2. GitHub Public Repository Inspection Matrix
-Located in [`src/lib/github/githubService.ts`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/lib/github/githubService.ts):
-- Parses GitHub links and extracts repository owner & name.
+Located in [`backend/app/services/github_service.py`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/backend/app/services/github_service.py):
+- Validates GitHub URLs and extracts repository owner & name.
 - Retrieves `README.md` and strips raw HTML comments/badges to fit into context window.
-- Fetches directory tree (`git/trees`) for file structure context.
-- Fallback hierarchy: `resume+github_readme` $\rightarrow$ `resume+github_tree` $\rightarrow$ `resume_only`.
+- Fetches directory tree (`git/trees`) for file structure context using async `httpx`.
+- Fallback hierarchy: `resume+github_readme` $\rightarrow$ `resume+github_tree` $\rightarrow$ `resume_only`. Inaccessible or missing repositories safely fall back without hallucinating repository information.
 
 ### 3. Voice Engine & Turn Detection (VAD)
 Located in [`src/lib/voice/speechEngine.ts`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/lib/voice/speechEngine.ts):
@@ -104,7 +132,7 @@ Located in [`src/lib/voice/speechEngine.ts`](file:///c:/Users/amoli/OneDrive/Des
 - **VAD Turn Detection:** 1.8 seconds of silence after candidate speaks automatically finalizes transcript, transitions state to `PROCESSING_ANSWER`, and submits to backend.
 
 ### 4. Selectable Company-Specific Technical Interview Styles
-Configured centrally in [`src/lib/interviewer/styles.ts`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/lib/interviewer/styles.ts):
+Configured centrally in [`backend/app/config/interview_styles.py`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/backend/app/config/interview_styles.py) and presentationally mirrored in [`src/lib/interviewer/styles.ts`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/lib/interviewer/styles.ts):
 After resume analysis and before the interview begins, the candidate selects their desired interview style preset. The selection dictates **how** the AI probes, while the candidate's resume and GitHub projects dictate **what** is asked:
 
 | Preset | Companies Included | Focus & Probing Emphasis | Example Grounded Question Angle (e.g., RAG Project) |
@@ -128,9 +156,13 @@ Designed to deliver a premium, futuristic AI technology aesthetic rather than a 
 
 ---
 
-## 🗄️ Database Schema (Prisma)
+## 🗄️ Database Layer (SQLite via SQLAlchemy)
 
-Managed via [`prisma/schema.prisma`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/prisma/schema.prisma):
+The application uses the existing SQLite database at `prisma/dev.db`. The database contents, existing records, and schema are preserved completely.
+
+Python database access is implemented in:
+- [`backend/app/db/session.py`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/backend/app/db/session.py): SQLAlchemy engine and session management. Automatically converts Prisma's `file:./dev.db` format to an absolute `sqlite:///...` path.
+- [`backend/app/db/models.py`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/backend/app/db/models.py): Accurate SQLAlchemy mappings for all tables (`User`, `Resume`, `Project`, `ProjectSource`, `Interview`, `InterviewQuestion`, `InterviewAnswer`, `Evaluation`). Includes a custom `PrismaDateTime` TypeDecorator that transparently converts Prisma's integer millisecond epoch timestamps to Python `datetime` objects.
 
 ```
 +----------------+       1:N       +----------------+       1:N       +-----------------+
@@ -155,15 +187,17 @@ Managed via [`prisma/schema.prisma`](file:///c:/Users/amoli/OneDrive/Desktop/Int
 
 ## 🔌 API Map Reference
 
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/api/resume/upload` | `POST` | Uploads PDF resume, extracts text, executes NLP parsing, inspects GitHub repos, saves DB models. |
-| `/api/interview/start` | `POST` | Accepts `{ resumeId, style }`, compiles CandidateContext, and initializes `Interview` with selected style. |
-| `/api/interview/session` | `POST` | Returns session configuration, system instructions tailored to selected style, and active style preset. |
-| `/api/interview/answer` | `POST` | Persists a single question & candidate transcript turn to DB. |
-| `/api/tts` | `POST` | Generates MP3 audio for AI spoken questions using OpenAI TTS. |
-| `/api/interview/end` | `POST` | Finalizes interview and triggers AI Evaluation Engine. |
-| `/api/interview/[id]/results` | `GET` | Fetches overall score, style preset, strengths, areas for improvement, per-question analysis, and transcript. |
+All API routes preserve their exact URLs, request payloads, response bodies, and HTTP status codes:
+
+| Endpoint | Method | Python Destination | Description |
+| :--- | :--- | :--- | :--- |
+| `/api/resume/upload` | `POST` | `backend/app/api/resume.py` | Multipart PDF resume upload, multi-strategy text extraction, OpenAI profile parsing, GitHub inspection, SQLite persistence. |
+| `/api/interview/start` | `POST` | `backend/app/api/interviews.py` | Accepts `{ resumeId, style }`, compiles Candidate Context, and initializes `Interview` record. |
+| `/api/interview/session` | `POST` | `backend/app/api/interviews.py` | Accepts `{ interviewId }`, returns session configuration and system instructions calibrated to the selected company style. |
+| `/api/interview/answer` | `POST` | `backend/app/api/interviews.py` | Accepts `{ interviewId, order, questionText, groundingSource, transcript, projectId }`, persists turn to SQLite. |
+| `/api/interview/end` | `POST` | `backend/app/api/interviews.py` | Accepts `{ interviewId }`, triggers AI evaluation engine, calculates overall score and strengths/improvements. |
+| `/api/interview/[id]/results` | `GET` | `backend/app/api/interviews.py` | Retrieves overall score, style preset, candidate details, projects, question breakdown, and transcript. |
+| `/api/tts` | `POST` | `backend/app/api/tts.py` | Accepts `{ text }`, generates binary `audio/mpeg` MP3 stream using OpenAI TTS (or returns `{ fallback: true }`). |
 
 ---
 
@@ -171,36 +205,74 @@ Managed via [`prisma/schema.prisma`](file:///c:/Users/amoli/OneDrive/Desktop/Int
 
 ```
 IntervAI/
+├── backend/                               # Python FastAPI Backend
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py                       # FastAPI application entrypoint & CORS
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   ├── resume.py                 # POST /api/resume/upload
+│   │   │   ├── interviews.py             # /start, /session, /answer, /end, /:id/results
+│   │   │   └── tts.py                    # POST /api/tts
+│   │   ├── config/
+│   │   │   ├── __init__.py
+│   │   │   ├── settings.py               # Environment & SQLite path configuration
+│   │   │   └── interview_styles.py       # FAANG, MANGOS, Big 4 preset definitions
+│   │   ├── db/
+│   │   │   ├── __init__.py
+│   │   │   ├── session.py                # SQLAlchemy session & engine factory
+│   │   │   └── models.py                 # SQLAlchemy ORM models with PrismaDateTime
+│   │   ├── schemas/
+│   │   │   ├── __init__.py
+│   │   │   ├── resume.py                 # Pydantic schemas for resume upload
+│   │   │   ├── interview.py              # Pydantic schemas for interview lifecycle
+│   │   │   └── evaluation.py             # Pydantic schemas for evaluation results
+│   │   └── services/
+│   │       ├── __init__.py
+│   │       ├── resume_parser.py          # PDF text extraction & structured parsing
+│   │       ├── github_service.py         # httpx GitHub README & file-tree retrieval
+│   │       ├── candidate_context_builder.py # Context dossier compiler
+│   │       ├── system_prompt.py          # Grounded interviewer prompt generator
+│   │       ├── evaluator.py              # AI evaluation & scoring service
+│   │       └── tts_service.py            # OpenAI TTS audio generation
+│   ├── tests/                            # Comprehensive Python Test Suite
+│   │   ├── __init__.py
+│   │   ├── test_context_and_prompts.py   # Grounding & style directives tests
+│   │   ├── test_db_and_api.py            # SQLite reads/writes & full API lifecycle tests
+│   │   ├── test_github_service.py        # GitHub URL parsing & README sanitizer tests
+│   │   └── test_resume_parser.py         # PDF parser & schema tests
+│   ├── requirements.txt                  # Python dependencies
+│   └── .env.example                      # Environment variables example for Python
 ├── prisma/
-│   └── schema.prisma              # Prisma ORM Database Models
+│   ├── schema.prisma                     # Prisma Schema Reference
+│   └── dev.db                            # SQLite Database (Preserved)
 ├── src/
 │   ├── app/
-│   │   ├── api/
-│   │   │   ├── resume/upload/     # PDF Upload & NLP Processing API
-│   │   │   ├── interview/start/   # Session Initialization API
-│   │   │   ├── interview/session/ # Realtime Session Configuration API
-│   │   │   ├── interview/answer/  # Turn Persistence API
-│   │   │   ├── interview/end/     # Evaluation Trigger API
-│   │   │   ├── interview/[id]/results/ # Evaluation Results API
-│   │   │   └── tts/               # Text-To-Speech Audio API
-│   │   ├── interview/[id]/        # Live Voice Interview Screen
-│   │   ├── processing/[id]/       # Context Processing Screen
-│   │   ├── results/[id]/          # Assessment & Report Screen
-│   │   ├── globals.css            # Dark Mode & Glassmorphism Design System
-│   │   ├── layout.tsx             # Root Application Layout
-│   │   └── page.tsx               # Landing Page & Resume Upload Dropzone
+│   │   ├── api/                          # Next.js TypeScript Proxy Routes
+│   │   │   ├── resume/upload/route.ts    # Proxies to FastAPI /api/resume/upload
+│   │   │   ├── interview/start/route.ts  # Proxies to FastAPI /api/interview/start
+│   │   │   ├── interview/session/route.ts# Proxies to FastAPI /api/interview/session
+│   │   │   ├── interview/answer/route.ts # Proxies to FastAPI /api/interview/answer
+│   │   │   ├── interview/end/route.ts    # Proxies to FastAPI /api/interview/end
+│   │   │   ├── interview/[id]/results/route.ts # Proxies to FastAPI /api/interview/:id/results
+│   │   │   └── tts/route.ts              # Proxies to FastAPI /api/tts (audio/mpeg)
+│   │   ├── interview/[id]/page.tsx       # Live Voice Interview Screen
+│   │   ├── processing/[id]/page.tsx      # Context Processing & Style Selection Screen
+│   │   ├── results/[id]/page.tsx         # Assessment & Report Screen
+│   │   ├── globals.css                   # Dark Mode & Glassmorphism Design System
+│   │   ├── layout.tsx                    # Root Application Layout
+│   │   └── page.tsx                      # Landing Page & Resume Upload Dropzone
 │   └── lib/
-│       ├── db.ts                  # Prisma Client Singleton Instance
-│       ├── context/               # Candidate Context Aggregator
-│       ├── github/                # GitHub REST API Service
-│       ├── interviewer/           # Grounded System Prompt Generator
-│       ├── nlp/                   # Resume Text Extractor & NLP Parser
-│       ├── voice/                 # SpeechEngine (TTS, STT, VAD)
-│       └── evaluation/            # Post-Interview AI Evaluator Engine
+│       ├── interviewer/
+│       │   └── styles.ts                 # Presentation Style Configurations for UI
+│       └── voice/
+│           └── speechEngine.ts           # Browser SpeechRecognition & Web Speech VAD
 ├── scripts/
-│   └── test_runner.ts             # System Integrity & Grounding Test Suite
-├── package.json                   # Dependencies & Scripts
-└── README.md                      # Detailed System Documentation
+│   ├── test_runner.ts                    # Backend Integrity Test Suite Runner
+│   ├── test_style_flow.ts                # End-to-End Style Flow Integration Test
+│   └── verify_landing.ts                 # Landing Page Verification Test
+├── package.json                          # npm scripts & dependencies
+└── README.md                             # Detailed System Documentation
 ```
 
 ---
@@ -208,21 +280,51 @@ IntervAI/
 ## ⚡ Local Setup & Installation
 
 ### Prerequisites
-* Node.js v20.x or higher
-* npm / pnpm / yarn
+* **Node.js:** v20.x or higher
+* **Python:** v3.11 or higher
+* **Package Managers:** `npm` and `pip`
 
-### 1. Clone & Install Dependencies
-```bash
-git clone https://github.com/Amolika123/IntervAI.git
-cd IntervAI
-npm install
-```
+---
 
-### 2. Environment Variables Configuration
-Create a `.env.local` file in the root directory:
+### 1. Python Backend Setup
+
+1. **Create and activate a virtual environment:**
+   ```bash
+   # On Windows (PowerShell):
+   python -m venv venv
+   .\venv\Scripts\Activate.ps1
+
+   # On macOS / Linux:
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+2. **Install Python dependencies:**
+   ```bash
+   pip install -r backend/requirements.txt
+   ```
+
+---
+
+### 2. Frontend Setup
+
+1. **Install Node.js dependencies:**
+   ```bash
+   npm install
+   ```
+
+---
+
+### 3. Environment Variables Configuration
+
+Create a `.env` (or `.env.local`) file in the root directory:
+
 ```env
-# Database Connection (SQLite local fallback / PostgreSQL string)
+# Database Connection (SQLite local path)
 DATABASE_URL="file:./dev.db"
+
+# Python FastAPI Base URL for Next.js Proxies
+PYTHON_API_BASE_URL="http://127.0.0.1:8000"
 
 # OpenAI API Key (Required for structured NLP, TTS audio & Evaluation)
 OPENAI_API_KEY="your-openai-api-key-here"
@@ -231,28 +333,72 @@ OPENAI_API_KEY="your-openai-api-key-here"
 GITHUB_TOKEN="your-github-personal-access-token"
 ```
 
-### 3. Initialize Database
-```bash
-npx prisma db push
-```
+---
 
-### 4. Run Development Server
+### 4. Running the Application
+
+You have two options for running the development environment:
+
+#### Option A: Run Both Concurrently (Recommended)
 ```bash
-npm run dev
+npm run dev:all
 ```
+This launches the FastAPI server on `http://127.0.0.1:8000` and the Next.js frontend on `http://localhost:3000` simultaneously in a single terminal with colored logs.
+
+#### Option B: Run in Separate Terminals
+1. **Terminal 1 (Python FastAPI Backend):**
+   ```bash
+   npm run dev:backend
+   # Or directly:
+   uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+   ```
+
+2. **Terminal 2 (Next.js Frontend):**
+   ```bash
+   npm run dev
+   ```
+
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
 ## 🧪 Testing & Verification
 
-Run the automated system integrity test suite verifying URL parsing, candidate context aggregation, and system prompt grounding guardrails:
+### 1. Python Backend Test Suite
+Run the 14 comprehensive unit and integration tests covering resume parsing, GitHub inspection, context generation, prompt grounding, all three interview styles, database read/writes, and full API lifecycle:
+
+```bash
+npm run test
+# Or directly:
+pytest backend/tests -v
+```
+
+### 2. System Integrity Runner
+Run the TypeScript system integrity test runner:
 
 ```bash
 npx tsx scripts/test_runner.ts
 ```
 
-To run a production build verification:
+### 3. End-to-End API Integration Flow Test
+Verify the full end-to-end request lifecycle across Next.js proxy routes, FastAPI, and SQLite:
+*(Ensure `npm run dev:all` is running)*
+
+```bash
+npx tsx scripts/test_style_flow.ts
+```
+
+### 4. Landing Page UI Verification Test
+Verify all landing page elements, headlines, video URL, marquee badges, and sections:
+*(Ensure `npm run dev` is running)*
+
+```bash
+npx tsx scripts/verify_landing.ts
+```
+
+### 5. Production Build Verification
+Verify Next.js production build and TypeScript compilation:
+
 ```bash
 npm run build
 ```
