@@ -15,14 +15,13 @@ import {
   VolumeX,
   RefreshCw,
   AlertCircle,
-  AlertTriangle,
   Play,
   ChevronDown,
   ChevronUp,
   Code2,
   Zap,
   Building2,
-  Timer
+  Timer,
 } from 'lucide-react';
 import { SpeechEngine, VoiceState } from '@/lib/voice/speechEngine';
 import { INTERVIEW_STYLES, InterviewStyleId } from '@/lib/interviewer/styles';
@@ -34,8 +33,9 @@ import {
   PER_QUESTION_DURATION_SECONDS,
   QUESTION_WARNING_15SEC_SECONDS,
   QUESTION_WARNING_5SEC_SECONDS,
-  AnswerStatus
+  AnswerStatus,
 } from '@/lib/interviewer/interviewConfig';
+import PageShell from '@/components/layout/PageShell';
 
 interface LiveInterviewProps {
   params: Promise<{ id: string }>;
@@ -75,7 +75,7 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
   // Transcript & Grounding State
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [currentQuestionOrder, setCurrentQuestionOrder] = useState<number>(1);
-  const [activeGroundingSource, setActiveGroundingSource] = useState<string>('resume:project_1');
+  const [activeGroundingSource, setActiveGroundingSource] = useState<string>('Initializing context...');
   const [openingQuestionText, setOpeningQuestionText] = useState<string>('');
 
   // Engine & Timing References
@@ -89,7 +89,7 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
   const isSubmittingRef = useRef<boolean>(false);
   const isEndingRef = useRef<boolean>(false);
   const currentQuestionOrderRef = useRef<number>(1);
-  const activeGroundingSourceRef = useRef<string>('resume:project_1');
+  const activeGroundingSourceRef = useRef<string>('Initializing context...');
   const lastQuestionTextRef = useRef<string>('');
 
   // Synchronize state to refs
@@ -148,124 +148,104 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
     let isMounted = true;
 
     const engine = new SpeechEngine({
-      onStateChange: (state) => {
-        if (isMounted) setVoiceState(state);
-      },
-      onInterimTranscript: (text) => {
-        if (isMounted) setInterimSpeechText(text);
-      },
-      onFinalTranscript: (finalText) => {
-        if (isMounted && finalText.trim().length > 0) {
-          handleCandidateFinalAnswer(finalText.trim(), 'answered');
-        }
-      },
-      onAISpeechEnd: () => {
-        // Start per-question timer ONLY after AI finishes speaking aloud
-        if (isMounted && !isEndingRef.current) {
+      onStateChange: (state: VoiceState) => {
+        if (!isMounted) return;
+        setVoiceState(state);
+
+        if (state === 'LISTENING') {
           startQuestionTimer();
+        } else if (state === 'AI_SPEAKING' || state === 'PROCESSING_ANSWER') {
+          stopQuestionTimer();
         }
       },
-      onError: (msg) => {
-        if (isMounted) {
-          setErrorMessage(msg);
-          setVoiceState('ERROR');
-        }
-      }
+      onInterimTranscript: (text: string) => {
+        if (!isMounted) return;
+        setInterimSpeechText(text);
+      },
+      onFinalTranscript: (finalTranscript: string) => {
+        if (!isMounted) return;
+        handleCandidateFinalAnswer(finalTranscript, 'answered');
+      },
+      onError: (err: string) => {
+        if (!isMounted) return;
+        console.warn('Speech engine warning:', err);
+        setErrorMessage(err);
+      },
     });
 
     speechEngineRef.current = engine;
 
-    async function loadInterviewData() {
+    async function loadInterviewSession() {
       try {
-        const sessionRes = await fetch('/api/interview/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ interviewId })
-        });
+        const res = await fetch(`/api/interview/session?interviewId=${interviewId}`);
+        const data = await res.json();
 
-        const sessionData = await sessionRes.json();
-
-        const resolvedStyle: InterviewStyleId =
-          sessionData.style && sessionData.style in INTERVIEW_STYLES
-            ? (sessionData.style as InterviewStyleId)
-            : 'FAANG';
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'Failed to load interview context.');
+        }
 
         if (isMounted) {
-          setInterviewStyle(resolvedStyle);
-        }
+          const loadedProjects = data.projects || [];
+          if (!loadedProjects || loadedProjects.length === 0) {
+            setErrorMessage('Candidate project context could not be loaded. Please re-upload your resume.');
+            return;
+          }
 
-        const name = sessionData.candidateContext?.candidate?.name || 'Candidate';
-        if (sessionData.candidateContext?.candidate?.name) {
-          setCandidateName(name);
-        }
+          const hasOnlyPlaceholders = loadedProjects.every(
+            (p: any) => !p.name || p.name.toLowerCase().includes('primary technical project') || p.name.toLowerCase().includes('unknown project')
+          );
+          if (hasOnlyPlaceholders) {
+            setErrorMessage('Unable to extract authentic projects from resume. Please re-upload your resume with distinct project sections.');
+            return;
+          }
 
-        let pList: any[] = [];
-        if (sessionData.candidateContext?.projects) {
-          pList = sessionData.candidateContext.projects;
-          setProjects(pList);
-          const firstProj = pList[0];
-          if (firstProj) {
-            const src = `project:${firstProj.name}:${firstProj.contextSource}`;
-            setActiveGroundingSource(src);
-            activeGroundingSourceRef.current = src;
+          setCandidateName(data.candidateName || 'Candidate');
+          setProjects(loadedProjects);
+          if (data.interviewStyle) {
+            setInterviewStyle(data.interviewStyle as InterviewStyleId);
+          }
+
+          const openingQ = data.openingQuestion;
+          const openingSrc = data.openingSource || (loadedProjects[0] ? `project:${loadedProjects[0].name}:overview` : 'resume:context');
+
+          if (!openingQ || openingQ.toLowerCase().includes('primary project')) {
+            const p1 = loadedProjects[0];
+            const p1Name = p1?.name || 'your project';
+            const techMention = (p1?.technologies && p1.technologies.length > 0) ? ` using ${p1.technologies.slice(0, 2).join(' and ')}` : '';
+            const fallbackGroundedQ = `Hello ${data.candidateName || 'Candidate'}. To begin our technical discussion in ${p1Name}${techMention}, walk me through the core architecture and key engineering decisions you made.`;
+            setOpeningQuestionText(fallbackGroundedQ);
+            lastQuestionTextRef.current = fallbackGroundedQ;
+            setActiveGroundingSource(`project:${p1Name}:architecture`);
+            activeGroundingSourceRef.current = `project:${p1Name}:architecture`;
+          } else {
+            setOpeningQuestionText(openingQ);
+            lastQuestionTextRef.current = openingQ;
+            setActiveGroundingSource(openingSrc);
+            activeGroundingSourceRef.current = openingSrc;
           }
         }
-
-        const p1 = pList[0];
-        const openingQ = sessionData.openingQuestion || (
-          resolvedStyle === 'FAANG'
-            ? (p1 ? `Hello ${name}. Let's dive into ${p1.name}. Can you walk me through the core implementation details and the primary data structures you used?` : `Hello ${name}. Can you walk me through the primary technical project on your resume?`)
-            : resolvedStyle === 'MANGOS'
-            ? (p1 ? `Hello ${name}. Let's discuss ${p1.name}. Can you walk me through the high-level architecture and the fundamental design trade-offs you made?` : `Hello ${name}. Can you walk me through your primary technical project on your resume?`)
-            : (p1 ? `Hello ${name}. Let's examine ${p1.name}. Can you walk me through its practical implementation, focusing on your APIs, databases, and application architecture?` : `Hello ${name}. Can you walk me through your primary technical project?`)
-        );
-
-        const openingSrc = sessionData.openingSource || (p1 ? `project:${p1.name}:${p1.contextSource}` : 'resume:project_overview');
-
+      } catch (e: any) {
         if (isMounted) {
-          setOpeningQuestionText(openingQ);
-          lastQuestionTextRef.current = openingQ;
-          setActiveGroundingSource(openingSrc);
-          activeGroundingSourceRef.current = openingSrc;
-          setTranscript([
-            { order: 1, speaker: 'AI', text: openingQ, groundingSource: openingSrc }
-          ]);
-        }
-      } catch (e) {
-        console.error('Failed to load session data:', e);
-        if (isMounted) {
-          setErrorMessage('Failed to connect to interview session.');
-          setVoiceState('ERROR');
+          setErrorMessage(e.message || 'Error initializing interview session.');
         }
       }
     }
 
-    loadInterviewData();
+    loadInterviewSession();
 
     return () => {
       isMounted = false;
       clearAllTimers();
-      if (speechEngineRef.current) speechEngineRef.current.destroy();
+      if (speechEngineRef.current) {
+        speechEngineRef.current.destroy();
+      }
     };
   }, [interviewId]);
 
-  // Start Voice Session Handler: Unlocks Audio Context, Starts Total Countdown, Speaks Opening Q
-  const handleStartVoiceSession = async () => {
-    if (!speechEngineRef.current) return;
+  // Total countdown timer
+  const startTotalTimer = () => {
+    if (totalTimerIntervalRef.current) return;
 
-    speechEngineRef.current.unlockAudioContext();
-    setSessionStarted(true);
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      setMicGranted(true);
-      stream.getTracks().forEach((t) => t.stop());
-    } catch (err) {
-      console.warn('Microphone permission denied:', err);
-      setMicGranted(false);
-    }
-
-    // Start Total Interview Countdown (40 minutes)
     totalDeadlineRef.current = Date.now() + TOTAL_INTERVIEW_DURATION_SECONDS * 1000;
     setTotalRemainingSeconds(TOTAL_INTERVIEW_DURATION_SECONDS);
 
@@ -276,166 +256,184 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
       setTotalRemainingSeconds(remainingSec);
 
       if (remainingSec <= 0) {
-        handleTotalInterviewTimeout();
+        clearAllTimers();
+        handleTotalTimeExpired();
       }
-    }, 500);
-
-    // AI Speaks opening question aloud (Question timer begins on onAISpeechEnd)
-    await speechEngineRef.current.speakAIQuestion(openingQuestionText);
+    }, 1000);
   };
 
-  // Handler for Question Timer Expiration (90s limit)
-  const handleQuestionTimeout = () => {
-    if (isEndingRef.current || isSubmittingRef.current) return;
-
-    // Check if candidate had any partial spoken words
-    const spoken = speechEngineRef.current?.getCurrentTranscript() || '';
-    if (spoken.trim().length > 0) {
-      handleCandidateFinalAnswer(spoken.trim(), 'timed_out');
-    } else {
-      handleCandidateFinalAnswer('', 'timed_out');
-    }
-  };
-
-  // Handler for Total Interview Timer Expiration (40 mins limit)
-  const handleTotalInterviewTimeout = async () => {
+  const handleTotalTimeExpired = async () => {
     if (isEndingRef.current) return;
     isEndingRef.current = true;
-    clearAllTimers();
+    setIsEnding(true);
 
-    // Check if candidate was speaking when total time expired
-    const inProgress = speechEngineRef.current?.getCurrentTranscript() || '';
-    if (inProgress.trim().length > 0 && !isSubmittingRef.current) {
+    if (speechEngineRef.current) {
+      speechEngineRef.current.stopSpeaking();
+    }
+
+    const currentAnswer = interimSpeechText || manualText;
+    if (currentAnswer && currentAnswer.trim()) {
       try {
-        await fetch('/api/interview/answer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            interviewId,
-            order: currentQuestionOrderRef.current,
-            questionText: lastQuestionTextRef.current || 'Technical interview question',
-            groundingSource: activeGroundingSourceRef.current,
-            transcript: inProgress.trim(),
-            status: 'answered'
-          })
-        });
+        await submitCandidateAnswer(currentAnswer, 'timed_out');
       } catch (e) {
-        console.warn('Final in-progress turn save notice:', e);
+        console.error('Error submitting in-progress answer on timeout:', e);
       }
     }
 
     await handleEndInterview();
   };
 
-  // Candidate Final Answer Handler (VAD auto-submit, timeout, or manual button click)
-  const handleCandidateFinalAnswer = async (answerText: string, status: AnswerStatus = 'answered') => {
-    if (isSubmittingRef.current || isEndingRef.current) return;
-    isSubmittingRef.current = true;
+  const handleQuestionTimeout = () => {
+    if (isEndingRef.current || isSubmittingRef.current) return;
+    if (speechEngineRef.current) {
+      speechEngineRef.current.stopListening();
+    }
 
-    stopQuestionTimer();
-    setVoiceState('PROCESSING_ANSWER');
-    setInterimSpeechText('');
+    const finalAnswer = interimSpeechText.trim() || manualText.trim();
+    const status: AnswerStatus = finalAnswer.length > 0 ? 'timed_out' : 'unanswered';
+    handleCandidateFinalAnswer(finalAnswer || '(Candidate did not provide an answer within time limit)', status);
+  };
 
-    const questionText = lastQuestionTextRef.current || 'Technical question';
-    const currentOrder = currentQuestionOrderRef.current;
-    const finalAnswerDisplay = answerText.trim() || (status === 'timed_out' ? '[Time expired without answer]' : '[Unanswered]');
+  const handleStartVoiceSession = async () => {
+    if (!speechEngineRef.current) return;
+    if (errorMessage && (!projects || projects.length === 0)) return;
+
+    let openingQ = openingQuestionText;
+    if (!openingQ && projects.length > 0) {
+      const p1 = projects[0];
+      const p1Name = p1?.name || 'your project';
+      const techMention = (p1?.technologies && p1.technologies.length > 0) ? ` using ${p1.technologies.slice(0, 2).join(' and ')}` : '';
+      openingQ = `Hello ${candidateName}. To begin our technical discussion in ${p1Name}${techMention}, walk me through the core architecture and key engineering decisions you made.`;
+      setOpeningQuestionText(openingQ);
+      lastQuestionTextRef.current = openingQ;
+    }
+
+    if (!openingQ) {
+      setErrorMessage('Interview question context is missing. Cannot start session without grounded questions.');
+      return;
+    }
+
+    const currentSrc = (activeGroundingSourceRef.current && activeGroundingSourceRef.current !== 'Initializing context...')
+      ? activeGroundingSourceRef.current
+      : (projects[0] ? `project:${projects[0].name}:architecture` : 'resume:context');
+
+    setActiveGroundingSource(currentSrc);
+    activeGroundingSourceRef.current = currentSrc;
+
+    setSessionStarted(true);
+    setMicGranted(true);
+    startTotalTimer();
 
     setTranscript((prev) => [
       ...prev,
-      { order: currentOrder, speaker: 'Candidate', text: finalAnswerDisplay, status }
+      {
+        order: 1,
+        speaker: 'AI',
+        text: openingQ,
+        groundingSource: currentSrc,
+      },
     ]);
 
-    // Save turn to backend DB and receive next non-repetitive grounded question from question bank
-    let backendNextQ = '';
-    let backendNextSource = activeGroundingSourceRef.current;
-    let backendNextOrder = currentOrder + 1;
+    await speechEngineRef.current.speakAIQuestion(openingQ);
+  };
+
+  const handleCandidateFinalAnswer = async (answerText: string, status: AnswerStatus = 'answered') => {
+    if (isSubmittingRef.current || isEndingRef.current) return;
+    isSubmittingRef.current = true;
+    stopQuestionTimer();
+    setInterimSpeechText('');
+
+    const trimmed = answerText.trim();
+    const effectiveText = trimmed || '(No answer provided)';
+
+    setTranscript((prev) => [
+      ...prev,
+      {
+        order: currentQuestionOrderRef.current,
+        speaker: 'Candidate',
+        text: effectiveText,
+        status,
+      },
+    ]);
+
+    await submitCandidateAnswer(effectiveText, status);
+    isSubmittingRef.current = false;
+  };
+
+  const submitCandidateAnswer = async (answerText: string, status: AnswerStatus) => {
+    setVoiceState('PROCESSING_ANSWER');
 
     try {
+      const currentProj = projects[0];
       const res = await fetch('/api/interview/answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           interviewId,
-          order: currentOrder,
-          questionText,
+          order: currentQuestionOrderRef.current,
+          question: lastQuestionTextRef.current,
+          questionText: lastQuestionTextRef.current,
+          answer: answerText,
+          transcript: answerText,
+          status,
           groundingSource: activeGroundingSourceRef.current,
-          transcript: answerText.trim(),
-          status
-        })
+          style: interviewStyle,
+          projectId: currentProj?.id || null,
+        }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.nextQuestion) backendNextQ = data.nextQuestion;
-        if (data.nextGroundingSource) backendNextSource = data.nextGroundingSource;
-        if (data.nextOrder) backendNextOrder = data.nextOrder;
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to process candidate answer.');
       }
-    } catch (e) {
-      console.error('Failed to persist turn or retrieve next question:', e);
-    }
 
-    // Check if total interview expired while processing answer
-    if (isEndingRef.current || totalRemainingSeconds <= 0) {
-      isSubmittingRef.current = false;
-      await handleEndInterview();
-      return;
-    }
-
-    setCurrentQuestionOrder(backendNextOrder);
-    setVoiceState('GENERATING_NEXT_QUESTION');
-
-    // Dynamic Style-Grounded Follow-up logic
-    setTimeout(async () => {
-      if (isEndingRef.current) {
-        isSubmittingRef.current = false;
+      if (data.interviewFinished || isEndingRef.current) {
+        await handleEndInterview();
         return;
       }
 
-      let nextQ = backendNextQ;
-      let nextSource = backendNextSource;
+      const nextQ = data.nextQuestion || data.question;
+      if (nextQ) {
+        const nextOrder = data.nextOrder || (currentQuestionOrderRef.current + 1);
+        setCurrentQuestionOrder(nextOrder);
+        currentQuestionOrderRef.current = nextOrder;
 
-      // Fallback only if backend did not return nextQuestion
-      if (!nextQ) {
-        const p1 = projects[0];
-        if (interviewStyle === 'FAANG') {
-          nextQ = p1
-            ? `In ${p1.name}, what were the main computational bottlenecks and how did you analyze algorithmic complexity?`
-            : `Can you walk me through the algorithmic trade-offs of the systems you implemented?`;
-          nextSource = p1 ? `project:${p1.name}:complexity` : 'resume:skills:complexity';
-        } else if (interviewStyle === 'MANGOS') {
-          nextQ = p1
-            ? `What alternative system architectures did you consider for ${p1.name}, and why select this stack?`
-            : `Can you walk me through the system design trade-offs and failure scenarios of the architectures you built?`;
-          nextSource = p1 ? `project:${p1.name}:architecture` : 'resume:skills:architecture';
-        } else {
-          nextQ = p1
-            ? `How did you design the database schemas, indexing, and APIs in ${p1.name} to ensure reliability?`
-            : `How did you structure database schemas and API contracts across your technical projects?`;
-          nextSource = p1 ? `project:${p1.name}:databases` : 'resume:skills:databases';
+        const nextSource = data.nextGroundingSource || data.groundingSource || activeGroundingSourceRef.current;
+        setActiveGroundingSource(nextSource);
+        activeGroundingSourceRef.current = nextSource;
+
+        lastQuestionTextRef.current = nextQ;
+
+        setTranscript((prev) => [
+          ...prev,
+          {
+            order: nextOrder,
+            speaker: 'AI',
+            text: nextQ,
+            groundingSource: nextSource,
+          },
+        ]);
+
+        if (speechEngineRef.current && !isEndingRef.current) {
+          await speechEngineRef.current.speakAIQuestion(nextQ);
         }
       }
-
-      lastQuestionTextRef.current = nextQ;
-      setActiveGroundingSource(nextSource);
-      activeGroundingSourceRef.current = nextSource;
-
-      setTranscript((prev) => [
-        ...prev,
-        { order: backendNextOrder, speaker: 'AI', text: nextQ, groundingSource: nextSource }
-      ]);
-
-      isSubmittingRef.current = false;
-
-      if (speechEngineRef.current && !isEndingRef.current) {
-        await speechEngineRef.current.speakAIQuestion(nextQ);
-      }
-    }, 700);
+    } catch (err: any) {
+      console.error('Answer processing error:', err);
+      setErrorMessage(err.message || 'Error processing response. Resuming voice session.');
+      setTimeout(() => {
+        if (speechEngineRef.current && !isEndingRef.current) {
+          speechEngineRef.current.startListening();
+        }
+      }, 700);
+    }
   };
 
   const handleInterruptAI = () => {
     if (speechEngineRef.current) {
       speechEngineRef.current.stopSpeaking();
       speechEngineRef.current.startListening();
-      // Start question timer immediately upon interruption
       startQuestionTimer();
     }
   };
@@ -464,7 +462,7 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
       await fetch('/api/interview/end', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ interviewId })
+        body: JSON.stringify({ interviewId }),
       });
       router.push(`/results/${interviewId}`);
     } catch (e) {
@@ -484,19 +482,47 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
   const renderVoiceStateBanner = () => {
     switch (voiceState) {
       case 'AI_SPEAKING':
-        return { label: `IntervAI is speaking (${currentStyleConfig.name} style)...`, color: currentStyleConfig.color, icon: <Volume2 size={20} /> };
+        return {
+          label: `IntervAI is speaking (${currentStyleConfig.name} style)...`,
+          color: '#00f0ff',
+          icon: <Volume2 size={18} />,
+        };
       case 'LISTENING':
-        return { label: 'Listening to you... Speak your answer into microphone', color: '#22c55e', icon: <Mic size={20} /> };
+        return {
+          label: 'Listening to candidate... Speak your answer into microphone',
+          color: '#22c55e',
+          icon: <Mic size={18} />,
+        };
       case 'PROCESSING_ANSWER':
-        return { label: 'Analyzing candidate answer against rubric...', color: 'var(--accent-purple)', icon: <RefreshCw size={20} className="spin" /> };
+        return {
+          label: 'Analyzing answer against candidate context dossier...',
+          color: '#00d9ff',
+          icon: <RefreshCw size={18} className="spin-icon" />,
+        };
       case 'GENERATING_NEXT_QUESTION':
-        return { label: `Formulating ${currentStyleConfig.name} follow-up question...`, color: 'var(--accent-indigo)', icon: <Sparkles size={20} /> };
+        return {
+          label: `Formulating ${currentStyleConfig.name} follow-up question...`,
+          color: '#00d9ff',
+          icon: <Sparkles size={18} />,
+        };
       case 'INTERVIEW_ENDED':
-        return { label: 'Interview concluding. Finalizing evaluation...', color: 'var(--accent-cyan)', icon: <RefreshCw size={20} className="spin" /> };
+        return {
+          label: 'Interview concluding. Finalizing evaluation report...',
+          color: '#00d9ff',
+          icon: <RefreshCw size={18} className="spin-icon" />,
+        };
       case 'ERROR':
-        return { label: errorMessage || 'Microphone error', color: '#f87171', icon: <AlertCircle size={20} /> };
+        return {
+          label: errorMessage || 'Microphone error',
+          color: '#f87171',
+          icon: <AlertCircle size={18} />,
+        };
       default:
-        return { label: `Ready to Start (${currentStyleConfig.name} Style)`, color: currentStyleConfig.color, icon: <Play size={20} /> };
+        return {
+          label: `Ready to Start (${currentStyleConfig.name} Style)`,
+          color: '#00d9ff',
+          icon: <Play size={18} />,
+        };
     }
   };
 
@@ -512,515 +538,986 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
   const isQuestionWarning15Sec = questionRemainingSeconds <= QUESTION_WARNING_15SEC_SECONDS && !isQuestionWarning5Sec && isQuestionTimerActive;
 
   return (
-    <main style={{ minHeight: '100vh', padding: '2rem 1.5rem', maxWidth: '1100px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
-      
-      {/* Navigation Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <div style={{
-            width: '12px',
-            height: '12px',
-            borderRadius: '50%',
-            background: stateBanner.color,
-            boxShadow: `0 0 12px ${stateBanner.color}`
-          }} />
-          <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>
-            Live Voice Technical Interview <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>• {candidateName}</span>
-          </span>
-
-          {/* Active Style Badge in Header */}
-          <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: `${currentStyleConfig.color}15`,
-            border: `1px solid ${currentStyleConfig.color}40`,
-            padding: '3px 10px',
-            borderRadius: '12px',
-            fontSize: '0.8rem',
-            fontWeight: 700,
-            color: currentStyleConfig.color
-          }}>
-            {interviewStyle === 'FAANG' && <Code2 size={13} />}
-            {interviewStyle === 'MANGOS' && <Zap size={13} />}
-            {interviewStyle === 'BIG_4' && <Building2 size={13} />}
-            <span>{currentStyleConfig.name} Style</span>
-          </div>
-
-          {/* Question Counter Pill */}
-          <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: 'rgba(255, 255, 255, 0.05)',
-            border: '1px solid var(--border-color)',
-            padding: '3px 10px',
-            borderRadius: '12px',
-            fontSize: '0.8rem',
-            fontWeight: 600,
-            color: 'var(--text-secondary)'
-          }}>
-            <span>Question #{currentQuestionOrder}</span>
-          </div>
-        </div>
-
-        {/* Header Right: Total Countdown & End Interview Button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-          
+    <PageShell
+      title="Live Voice Technical Interview"
+      badge={
+        <span className="fm-interview-header-badge">
+          {interviewStyle === 'FAANG' && <Code2 size={13} />}
+          {interviewStyle === 'MANGOS' && <Zap size={13} />}
+          {interviewStyle === 'BIG_4' && <Building2 size={13} />}
+          <span>{currentStyleConfig.name} Preset</span>
+        </span>
+      }
+      rightAction={
+        <div className="fm-header-actions">
           {/* Total Countdown Timer Component */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            background: isTotalWarning10Sec
-              ? 'rgba(239, 68, 68, 0.2)'
-              : isTotalWarning1Min
-              ? 'rgba(245, 158, 11, 0.2)'
-              : isTotalWarning5Min
-              ? 'rgba(245, 158, 11, 0.1)'
-              : 'rgba(255, 255, 255, 0.05)',
-            border: isTotalWarning10Sec
-              ? '1px solid rgba(239, 68, 68, 0.6)'
-              : isTotalWarning1Min
-              ? '1px solid rgba(245, 158, 11, 0.5)'
-              : isTotalWarning5Min
-              ? '1px solid rgba(245, 158, 11, 0.35)'
-              : '1px solid var(--border-color)',
-            padding: '6px 14px',
-            borderRadius: '20px',
-            fontSize: '0.9rem',
-            transition: 'all 0.3s ease',
-            boxShadow: isTotalWarning10Sec ? '0 0 15px rgba(239, 68, 68, 0.4)' : 'none'
-          }}>
-            <Clock size={16} color={isTotalWarning10Sec ? '#ef4444' : (isTotalWarning1Min || isTotalWarning5Min) ? '#f59e0b' : 'var(--accent-indigo)'} />
-            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
-              <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>Total Remaining</span>
-              <span style={{
-                fontWeight: 700,
-                fontFamily: 'monospace',
-                fontSize: '1rem',
-                color: isTotalWarning10Sec ? '#ef4444' : (isTotalWarning1Min || isTotalWarning5Min) ? '#f59e0b' : 'var(--text-primary)'
-              }}>
-                {formatCountdown(totalRemainingSeconds)}
-              </span>
+          <div
+            className={`fm-total-timer ${isTotalWarning10Sec ? 'is-warning-10s' : isTotalWarning1Min ? 'is-warning-1m' : isTotalWarning5Min ? 'is-warning-5m' : ''}`}
+          >
+            <Clock
+              size={16}
+              color={isTotalWarning10Sec ? '#ef4444' : isTotalWarning1Min || isTotalWarning5Min ? '#f59e0b' : '#00d9ff'}
+            />
+            <div className="fm-timer-text">
+              <span className="fm-timer-label">Total Time</span>
+              <span className="fm-timer-digits">{formatCountdown(totalRemainingSeconds)}</span>
             </div>
-
-            {/* Warning Badges */}
-            {isTotalWarning10Sec && (
-              <span style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 800, textTransform: 'uppercase', animation: 'spin 1s' }}>
-                Ending Soon!
-              </span>
-            )}
-            {isTotalWarning1Min && (
-              <span style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>
-                1m left
-              </span>
-            )}
-            {isTotalWarning5Min && (
-              <span style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>
-                5m left
-              </span>
-            )}
+            {isTotalWarning10Sec && <span className="fm-timer-badge danger">Ending Soon!</span>}
+            {isTotalWarning1Min && <span className="fm-timer-badge warning">1m left</span>}
+            {isTotalWarning5Min && <span className="fm-timer-badge warning">5m left</span>}
           </div>
 
           <button onClick={handleEndInterview} disabled={isEnding} className="btn-danger">
-            <Square size={16} />
-            <span>{isEnding ? 'Finalizing Evaluation...' : 'End Interview'}</span>
+            <Square size={14} />
+            <span>{isEnding ? 'Finalizing...' : 'End Interview'}</span>
           </button>
         </div>
-      </header>
-
-      {/* Main Interactive Stage */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '1.5rem', flex: 1 }}>
-        
-        {/* Left Column: Voice Orb & Transcript */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          
-          {/* AI Voice Avatar Orb Panel */}
-          <div className="glass-panel" style={{ padding: '2.5rem 2rem', textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
-            
-            {/* Start Voice Session Overlay if not started */}
-            {!sessionStarted ? (
-              <div style={{ padding: '1rem 0' }}>
-                <div style={{
-                  width: '90px',
-                  height: '90px',
-                  borderRadius: '50%',
-                  background: 'var(--gradient-primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  margin: '0 auto 1.5rem auto',
-                  boxShadow: '0 8px 30px rgba(99, 102, 241, 0.5)'
-                }}>
-                  <Volume2 size={44} color="#ffffff" />
-                </div>
-                <h3 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem' }}>
-                  Ready to Start {currentStyleConfig.name} Voice Interview
-                </h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '520px', margin: '0 auto 1.5rem auto' }}>
-                  Preset: <strong>{currentStyleConfig.name}</strong> ({currentStyleConfig.companies.join(', ')}). 
-                  Total duration: <strong>{Math.floor(TOTAL_INTERVIEW_DURATION_SECONDS / 60)} minutes</strong> ({PER_QUESTION_DURATION_SECONDS} seconds per question).
-                  Click below to authorize audio playback and start the countdown.
-                </p>
-                <button onClick={handleStartVoiceSession} className="btn-primary" style={{ padding: '16px 36px', fontSize: '1.1rem' }}>
-                  <Play size={20} />
-                  <span>Start Voice Session Now</span>
-                </button>
-              </div>
-            ) : (
-              <>
-                {/* Per-Question Answer Countdown Pill */}
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '6px 16px',
-                  borderRadius: '20px',
-                  background: isQuestionWarning5Sec
-                    ? 'rgba(239, 68, 68, 0.25)'
-                    : isQuestionWarning15Sec
-                    ? 'rgba(245, 158, 11, 0.2)'
-                    : isQuestionTimerActive
-                    ? 'rgba(99, 102, 241, 0.12)'
-                    : 'rgba(255, 255, 255, 0.05)',
-                  border: isQuestionWarning5Sec
-                    ? '1.5px solid rgba(239, 68, 68, 0.7)'
-                    : isQuestionWarning15Sec
-                    ? '1px solid rgba(245, 158, 11, 0.6)'
-                    : '1px solid var(--border-color)',
-                  marginBottom: '1.25rem',
-                  transition: 'all 0.3s ease',
-                  boxShadow: isQuestionWarning5Sec ? '0 0 20px rgba(239, 68, 68, 0.4)' : 'none'
-                }}>
-                  <Timer size={16} color={isQuestionWarning5Sec ? '#ef4444' : isQuestionWarning15Sec ? '#f59e0b' : 'var(--accent-indigo)'} />
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                    {isQuestionTimerActive ? 'Question Answer Time:' : 'Interviewer Speaking:'}
-                  </span>
-                  <span style={{
-                    fontFamily: 'monospace',
-                    fontWeight: 800,
-                    fontSize: '1rem',
-                    color: isQuestionWarning5Sec ? '#ef4444' : isQuestionWarning15Sec ? '#f59e0b' : 'var(--accent-cyan)'
-                  }}>
-                    {isQuestionTimerActive ? formatCountdown(questionRemainingSeconds) : 'Timer Paused'}
-                  </span>
-                  {isQuestionWarning5Sec && (
-                    <span style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 800, textTransform: 'uppercase' }}>
-                      Final 5s!
-                    </span>
-                  )}
-                  {isQuestionWarning15Sec && (
-                    <span style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>
-                      15s remaining
-                    </span>
-                  )}
-                </div>
-
-                {/* Animated Glowing Voice Orb */}
-                <div 
-                  style={{
-                    width: '110px',
-                    height: '110px',
-                    borderRadius: '50%',
-                    background: voiceState === 'AI_SPEAKING' ? 'var(--gradient-primary)' : voiceState === 'LISTENING' ? 'linear-gradient(135deg, #22c55e, #10b981)' : 'var(--bg-surface-elevated)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 1.5rem auto',
-                    border: `3px solid ${currentStyleConfig.color}60`,
-                    transition: 'all 0.4s ease',
-                    boxShadow: voiceState === 'AI_SPEAKING' ? `0 0 35px ${currentStyleConfig.color}60` : voiceState === 'LISTENING' ? '0 0 35px rgba(34, 197, 94, 0.5)' : 'none'
-                  }} 
-                  className={voiceState === 'AI_SPEAKING' || voiceState === 'LISTENING' ? 'voice-pulse-active' : ''}
-                >
-                  {voiceState === 'LISTENING' ? (
-                    <Mic size={52} color="#ffffff" />
-                  ) : (
-                    <Bot size={52} color={voiceState === 'AI_SPEAKING' ? '#ffffff' : currentStyleConfig.color} />
-                  )}
-                </div>
-
-                <h3 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '0.4rem' }}>
-                  Interv<span className="gradient-text">AI</span> Voice Interviewer
-                </h3>
-
-                {/* Voice State Badge */}
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px 18px',
-                  borderRadius: '25px',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: `1px solid ${stateBanner.color}`,
-                  color: stateBanner.color,
-                  fontSize: '0.925rem',
-                  fontWeight: 700,
-                  marginBottom: '1rem'
-                }}>
-                  {stateBanner.icon}
-                  <span>{stateBanner.label}</span>
-                </div>
-
-                {/* Frequency Spectrum Waveform */}
-                {(voiceState === 'AI_SPEAKING' || voiceState === 'LISTENING') && (
-                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', height: '36px' }}>
-                    <div className="wave-bar" />
-                    <div className="wave-bar" />
-                    <div className="wave-bar" />
-                    <div className="wave-bar" />
-                    <div className="wave-bar" />
-                  </div>
-                )}
-
-                {/* Candidate Interim Live Speech View */}
-                {voiceState === 'LISTENING' && interimSpeechText && (
-                  <div style={{
-                    marginTop: '1rem',
-                    padding: '12px 18px',
-                    borderRadius: '12px',
-                    background: 'rgba(34, 197, 94, 0.08)',
-                    border: '1px solid rgba(34, 197, 94, 0.25)',
-                    color: '#22c55e',
-                    fontSize: '0.95rem',
-                    fontStyle: 'italic',
-                    maxWidth: '600px',
-                    margin: '1rem auto 0 auto'
-                  }}>
-                    "{interimSpeechText}"
-                  </div>
-                )}
-
-                {/* Action controls: Interrupt / Re-listen */}
-                <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '1.25rem' }}>
-                  {voiceState === 'AI_SPEAKING' && (
-                    <button onClick={handleInterruptAI} className="btn-secondary" style={{ fontSize: '0.85rem' }}>
-                      <VolumeX size={16} />
-                      <span>Interrupt AI & Answer</span>
-                    </button>
-                  )}
-                  {voiceState !== 'AI_SPEAKING' && voiceState !== 'LISTENING' && (
-                    <button onClick={handleManualStartListening} className="btn-secondary" style={{ fontSize: '0.85rem' }}>
-                      <Mic size={16} color="#22c55e" />
-                      <span>Tap to Speak</span>
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
+      }
+      maxWidth="1200px"
+    >
+      <div className="fm-interview-stage">
+        {/* Sub-Header Candidate Bar */}
+        <div className="fm-interview-subbar">
+          <div className="fm-subbar-left">
+            <span className="fm-status-dot" style={{ background: stateBanner.color, boxShadow: `0 0 10px ${stateBanner.color}` }} />
+            <span className="fm-candidate-name">{candidateName}</span>
+            <span className="fm-dot-sep">•</span>
+            <span className="fm-q-pill">Question #{currentQuestionOrder}</span>
           </div>
 
-          {/* Live Transcript Stream Panel */}
-          <div className="glass-panel" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', maxHeight: '380px' }}>
-            <div style={{ fontSize: '0.875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-muted)', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Verified Interview Transcript</span>
-              <span style={{ color: currentStyleConfig.color, fontSize: '0.75rem', textTransform: 'none', fontWeight: 700 }}>
-                {currentStyleConfig.name} Probing
-              </span>
-            </div>
+          <div className="fm-subbar-right">
+            <span className="fm-grounding-indicator">
+              Grounding: <strong>{activeGroundingSource}</strong>
+            </span>
+          </div>
+        </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '6px' }}>
-              {transcript.map((turn, idx) => (
-                <div key={idx} style={{
-                  display: 'flex',
-                  gap: '12px',
-                  alignSelf: turn.speaker === 'AI' ? 'flex-start' : 'flex-end',
-                  maxWidth: '85%'
-                }}>
-                  <div style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    background: turn.speaker === 'AI' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(236, 72, 153, 0.15)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0
-                  }}>
-                    {turn.speaker === 'AI' ? <Bot size={18} color="var(--accent-indigo)" /> : <User size={18} color="var(--accent-pink)" />}
+        {/* Main 2-Column Grid */}
+        <div className="fm-interview-grid">
+          {/* Left Column: Voice Orb & Transcript */}
+          <div className="fm-interview-left">
+            {/* AI Voice Avatar Orb Panel */}
+            <div className="glass-panel fm-voice-panel">
+              {!sessionStarted ? (
+                <div className="fm-pre-session">
+                  <div className="fm-pre-orb">
+                    <Volume2 size={40} color="#ffffff" />
+                  </div>
+                  <h3 className="fm-pre-title">
+                    Ready to Start {currentStyleConfig.name} Voice Interview
+                  </h3>
+                  <p className="fm-pre-desc">
+                    Style: <strong>{currentStyleConfig.name}</strong> ({currentStyleConfig.companies.join(', ')}).
+                    Total duration: <strong>{Math.floor(TOTAL_INTERVIEW_DURATION_SECONDS / 60)} minutes</strong> ({PER_QUESTION_DURATION_SECONDS}s per question).
+                    Click below to authorize your microphone and launch the conversation.
+                  </p>
+                  {errorMessage && (
+                    <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', color: '#fca5a5', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+                      <AlertCircle size={16} color="#ef4444" style={{ flexShrink: 0 }} />
+                      <span>{errorMessage}</span>
+                    </div>
+                  )}
+                  {projects.length === 0 && errorMessage ? (
+                    <button onClick={() => router.push('/')} className="btn-secondary fm-launch-btn">
+                      <span>Return to Upload Resume</span>
+                    </button>
+                  ) : (
+                    <button onClick={handleStartVoiceSession} className="btn-primary fm-launch-btn">
+                      <Play size={18} />
+                      <span>Start Voice Session Now</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="fm-active-session">
+                  {/* Per-Question Answer Countdown Pill */}
+                  <div
+                    className={`fm-question-timer ${isQuestionWarning5Sec ? 'is-warn-5s' : isQuestionWarning15Sec ? 'is-warn-15s' : isQuestionTimerActive ? 'is-active' : ''}`}
+                  >
+                    <Timer
+                      size={15}
+                      color={isQuestionWarning5Sec ? '#ef4444' : isQuestionWarning15Sec ? '#f59e0b' : '#00d9ff'}
+                    />
+                    <span className="q-timer-label">
+                      {isQuestionTimerActive ? 'Question Answer Time:' : 'Interviewer Speaking:'}
+                    </span>
+                    <span className="q-timer-val">
+                      {isQuestionTimerActive ? formatCountdown(questionRemainingSeconds) : 'Timer Paused'}
+                    </span>
+                    {isQuestionWarning5Sec && <span className="q-warn-pill red">Final 5s!</span>}
+                    {isQuestionWarning15Sec && <span className="q-warn-pill amber">15s remaining</span>}
                   </div>
 
-                  <div style={{
-                    background: turn.speaker === 'AI' ? 'var(--bg-surface-elevated)' : 'rgba(236, 72, 153, 0.08)',
-                    border: '1px solid var(--border-color)',
-                    padding: '12px 16px',
-                    borderRadius: '14px',
-                    fontSize: '0.925rem'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                      <span style={{ fontWeight: 700, fontSize: '0.75rem', color: turn.speaker === 'AI' ? 'var(--accent-indigo)' : 'var(--accent-pink)' }}>
-                        {turn.speaker === 'AI' ? `IntervAI (${currentStyleConfig.name})` : candidateName}
-                      </span>
-                      {turn.status && turn.status !== 'answered' && (
-                        <span style={{
-                          fontSize: '0.7rem',
-                          fontWeight: 700,
-                          padding: '1px 6px',
-                          borderRadius: '8px',
-                          background: turn.status === 'timed_out' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-                          color: turn.status === 'timed_out' ? '#f59e0b' : '#ef4444'
-                        }}>
-                          {turn.status === 'timed_out' ? 'Timed Out' : 'Unanswered'}
-                        </span>
-                      )}
-                    </div>
-                    <div>{turn.text}</div>
-                    {turn.groundingSource && (
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '6px', fontStyle: 'italic' }}>
-                        Source: {turn.groundingSource}
-                      </div>
+                  {/* Animated Glowing Voice Orb */}
+                  <div
+                    className={`fm-voice-orb ${voiceState === 'AI_SPEAKING' || voiceState === 'LISTENING' ? 'voice-pulse-active' : ''} ${voiceState === 'LISTENING' ? 'is-listening' : 'is-ai'}`}
+                  >
+                    {voiceState === 'LISTENING' ? (
+                      <Mic size={48} color="#ffffff" />
+                    ) : (
+                      <Bot size={48} color="#ffffff" />
                     )}
                   </div>
-                </div>
-              ))}
-            </div>
 
-            {/* Accessibility Manual Text Input Fallback (Accordion) */}
-            <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)' }}>
-              <button 
-                onClick={() => setShowAccessibilityText(!showAccessibilityText)} 
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                {showAccessibilityText ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                <span>Text Fallback (For debugging / accessibility)</span>
-              </button>
+                  <h3 className="fm-orb-title">
+                    Interv<span className="gradient-text">AI</span> Autonomous Interviewer
+                  </h3>
 
-              {showAccessibilityText && (
-                <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-                  <input
-                    type="text"
-                    placeholder="Type answer manually if microphone unavailable..."
-                    value={manualText}
-                    onChange={(e) => setManualText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && manualText.trim()) {
-                        handleCandidateFinalAnswer(manualText, 'answered');
-                        setManualText('');
-                      }
-                    }}
-                    style={{
-                      flex: 1,
-                      background: 'rgba(255, 255, 255, 0.04)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '8px',
-                      padding: '8px 12px',
-                      color: 'var(--text-primary)',
-                      fontSize: '0.85rem'
-                    }}
-                  />
-                  <button 
-                    onClick={() => {
-                      if (manualText.trim()) {
-                        handleCandidateFinalAnswer(manualText, 'answered');
-                        setManualText('');
-                      }
-                    }}
-                    className="btn-secondary"
-                    style={{ padding: '8px 14px', fontSize: '0.85rem' }}
-                  >
-                    <Send size={14} />
-                    <span>Submit</span>
-                  </button>
+                  {/* Voice State Badge */}
+                  <div className="fm-voice-state-badge" style={{ borderColor: stateBanner.color, color: stateBanner.color }}>
+                    {stateBanner.icon}
+                    <span>{stateBanner.label}</span>
+                  </div>
+
+                  {/* Frequency Spectrum Waveform */}
+                  {(voiceState === 'AI_SPEAKING' || voiceState === 'LISTENING') && (
+                    <div className="fm-spectrum">
+                      <div className="wave-bar" />
+                      <div className="wave-bar" />
+                      <div className="wave-bar" />
+                      <div className="wave-bar" />
+                      <div className="wave-bar" />
+                    </div>
+                  )}
+
+                  {/* Candidate Interim Live Speech View */}
+                  {voiceState === 'LISTENING' && interimSpeechText && (
+                    <div className="fm-interim-box">
+                      &ldquo;{interimSpeechText}&rdquo;
+                    </div>
+                  )}
+
+                  {/* Action controls: Interrupt / Re-listen */}
+                  <div className="fm-orb-controls">
+                    {voiceState === 'AI_SPEAKING' && (
+                      <button onClick={handleInterruptAI} className="btn-secondary fm-orb-btn">
+                        <VolumeX size={15} />
+                        <span>Interrupt AI & Answer</span>
+                      </button>
+                    )}
+                    {voiceState !== 'AI_SPEAKING' && voiceState !== 'LISTENING' && (
+                      <button onClick={handleManualStartListening} className="btn-secondary fm-orb-btn">
+                        <Mic size={15} color="#22c55e" />
+                        <span>Tap to Speak</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
 
-          </div>
-        </div>
+            {/* Live Transcript Stream Panel */}
+            <div className="glass-panel fm-transcript-panel">
+              <div className="fm-transcript-header">
+                <span>Verified Interview Transcript</span>
+                <span className="fm-probing-tag">{currentStyleConfig.name} Probing</span>
+              </div>
 
-        {/* Right Sidebar: Context & Voice Status */}
-        <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <h4 style={{ fontSize: '1rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-            Interview Control & Context
-          </h4>
-
-          {/* Timing Rules Card */}
-          <div style={{
-            padding: '12px',
-            borderRadius: '10px',
-            background: 'rgba(99, 102, 241, 0.07)',
-            border: '1px solid rgba(99, 102, 241, 0.25)'
-          }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-indigo)', textTransform: 'uppercase', marginBottom: '4px' }}>
-              Pacing & Timing Limits
-            </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <div>• Total Session: <strong>{TOTAL_INTERVIEW_DURATION_SECONDS / 60} mins</strong></div>
-              <div>• Per-Question Limit: <strong>{PER_QUESTION_DURATION_SECONDS} secs</strong></div>
-              <div>• Warning Alerts: <strong>5m, 1m & 10s</strong> total; <strong>15s & 5s</strong> per question</div>
-            </div>
-          </div>
-
-          {/* Active Style Details Card */}
-          <div style={{
-            padding: '12px',
-            borderRadius: '10px',
-            background: `${currentStyleConfig.color}10`,
-            border: `1px solid ${currentStyleConfig.color}35`
-          }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '3px' }}>
-              Selected Style Preset
-            </div>
-            <div style={{ fontWeight: 800, color: currentStyleConfig.color, fontSize: '1rem' }}>
-              {currentStyleConfig.name} • {currentStyleConfig.badge}
-            </div>
-            <div style={{ fontSize: '0.775rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              {currentStyleConfig.companies.join(', ')}
-            </div>
-          </div>
-
-          {/* Microphone Status Card */}
-          <div style={{ padding: '12px', borderRadius: '10px', background: micGranted ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)', border: `1px solid ${micGranted ? 'rgba(34, 197, 94, 0.25)' : 'rgba(239, 68, 68, 0.25)'}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 700, fontSize: '0.9rem', color: micGranted ? '#22c55e' : '#f87171' }}>
-              {micGranted ? <Mic size={18} /> : <MicOff size={18} />}
-              <span>{micGranted ? 'MICROPHONE ACTIVE' : 'MICROPHONE DISABLED'}</span>
-            </div>
-            <p style={{ fontSize: '0.775rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              {micGranted ? 'Speak directly. Silence turn-detection finalizes your answer.' : 'Click Start Voice Session to activate microphone.'}
-            </p>
-          </div>
-
-          {/* Grounded Projects List */}
-          <div>
-            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-              Grounded Resume Context
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {projects.map((proj, i) => (
-                <div key={i} style={{
-                  padding: '10px',
-                  borderRadius: '8px',
-                  background: 'var(--bg-surface-elevated)',
-                  border: '1px solid var(--border-color)',
-                  fontSize: '0.85rem'
-                }}>
-                  <div style={{ fontWeight: 700, color: 'var(--accent-cyan)' }}>{proj.name}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Source: {proj.contextSource}
+              <div className="fm-transcript-stream">
+                {transcript.length === 0 ? (
+                  <div className="fm-transcript-empty">
+                    Transcript turns will appear here in real-time as the voice conversation progresses.
                   </div>
-                </div>
-              ))}
+                ) : (
+                  transcript.map((turn, idx) => (
+                    <div
+                      key={idx}
+                      className={`fm-turn-row ${turn.speaker === 'AI' ? 'is-ai-turn' : 'is-user-turn'}`}
+                    >
+                      <div className="fm-turn-avatar">
+                        {turn.speaker === 'AI' ? <Bot size={16} /> : <User size={16} />}
+                      </div>
+
+                      <div className="fm-turn-bubble">
+                        <div className="fm-turn-head">
+                          <span className="fm-turn-author">
+                            {turn.speaker === 'AI' ? `IntervAI (${currentStyleConfig.name})` : candidateName}
+                          </span>
+                          {turn.status && turn.status !== 'answered' && (
+                            <span
+                              className={`fm-turn-status ${turn.status === 'timed_out' ? 'is-timed-out' : 'is-unanswered'}`}
+                            >
+                              {turn.status === 'timed_out' ? 'Timed Out' : 'Unanswered'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="fm-turn-body">{turn.text}</div>
+                        {turn.groundingSource && (
+                          <div className="fm-turn-source">Source: {turn.groundingSource}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Accessibility Manual Text Input Fallback (Accordion) */}
+              <div className="fm-accessibility-box">
+                <button
+                  type="button"
+                  onClick={() => setShowAccessibilityText(!showAccessibilityText)}
+                  className="fm-accessibility-toggle"
+                >
+                  {showAccessibilityText ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  <span>Text Fallback (For accessibility & noisy environments)</span>
+                </button>
+
+                {showAccessibilityText && (
+                  <div className="fm-accessibility-form">
+                    <input
+                      type="text"
+                      placeholder="Type answer manually if microphone unavailable..."
+                      value={manualText}
+                      onChange={(e) => setManualText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && manualText.trim()) {
+                          handleCandidateFinalAnswer(manualText, 'answered');
+                          setManualText('');
+                        }
+                      }}
+                      className="fm-manual-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (manualText.trim()) {
+                          handleCandidateFinalAnswer(manualText, 'answered');
+                          setManualText('');
+                        }
+                      }}
+                      className="btn-secondary fm-manual-submit"
+                    >
+                      <Send size={14} />
+                      <span>Submit</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          <div style={{ marginTop: 'auto', padding: '10px', borderRadius: '8px', background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.2)', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            <Sparkles size={14} color="var(--accent-indigo)" style={{ display: 'inline', marginRight: '6px' }} />
-            <span>AI speaks every question aloud. Countdown begins only when interviewer speech completes.</span>
+          {/* Right Column: Context & Controls Sidebar */}
+          <div className="glass-panel fm-sidebar-panel">
+            <h4 className="fm-sidebar-title">Interview Control & Context</h4>
+
+            {/* Timing Rules Card */}
+            <div className="fm-timing-rules-card">
+              <div className="timing-rules-head">Pacing & Timing Limits</div>
+              <div className="timing-rules-list">
+                <div>• Total Session: <strong>{TOTAL_INTERVIEW_DURATION_SECONDS / 60} mins</strong></div>
+                <div>• Per-Question Limit: <strong>{PER_QUESTION_DURATION_SECONDS} secs</strong></div>
+                <div>• Warning Alerts: <strong>5m, 1m & 10s</strong> total; <strong>15s & 5s</strong> per question</div>
+              </div>
+            </div>
+
+            {/* Active Style Preset Card */}
+            <div className="fm-active-style-card">
+              <div className="active-style-label">Selected Style Preset</div>
+              <div className="active-style-name">
+                {currentStyleConfig.name} • {currentStyleConfig.badge}
+              </div>
+              <div className="active-style-comps">{currentStyleConfig.companies.join(', ')}</div>
+            </div>
+
+            {/* Microphone Status Card */}
+            <div className={`fm-mic-status-card ${micGranted ? 'is-granted' : 'is-denied'}`}>
+              <div className="mic-status-row">
+                {micGranted ? <Mic size={16} /> : <MicOff size={16} />}
+                <span>{micGranted ? 'MICROPHONE ACTIVE' : 'MICROPHONE DISABLED'}</span>
+              </div>
+              <p className="mic-status-desc">
+                {micGranted
+                  ? 'Speak directly. Automatic silence detection finalizes your answer.'
+                  : 'Start voice session to authorize microphone input.'}
+              </p>
+            </div>
+
+            {/* Grounded Resume Projects List */}
+            <div className="fm-projects-box">
+              <div className="projects-box-head">Grounded Resume Context</div>
+              <div className="projects-box-list">
+                {projects.length === 0 ? (
+                  <div className="projects-empty" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'rgba(255,255,255,0.6)' }}>
+                    <AlertCircle size={14} color="#f59e0b" />
+                    <span>No extracted projects found.</span>
+                  </div>
+                ) : (
+                  projects.map((proj, i) => (
+                    <div key={i} className="proj-item-card">
+                      <div className="proj-item-name">{proj.name}</div>
+                      <div className="proj-item-src">Source: {proj.contextSource || 'resume_only'}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* AI Prompter Tip */}
+            <div className="fm-ai-prompter-tip">
+              <Sparkles size={14} color="#00d9ff" />
+              <span>Questions are generated and grounded exclusively in your own resume claims and code.</span>
+            </div>
           </div>
         </div>
-
       </div>
 
-      <style jsx global>{`
-        .spin {
-          animation: spin 1.2s linear infinite;
+      <style jsx>{`
+        .fm-interview-header-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 3px 10px;
+          border-radius: 9999px;
+          background: rgba(0, 217, 255, 0.15);
+          border: 1px solid rgba(0, 217, 255, 0.35);
+          color: #00d9ff;
+          font-size: 0.75rem;
+          font-weight: 700;
         }
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
+
+        .fm-header-actions {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+        }
+
+        /* Total Countdown Timer Pill */
+        .fm-total-timer {
+          display: flex;
+          align-items: center;
+          gap: 0.6rem;
+          padding: 0.4rem 0.9rem;
+          border-radius: 9999px;
+          background: rgba(255, 255, 255, 0.1);
+          border: 1.5px solid rgba(255, 255, 255, 0.25);
+          color: #ffffff;
+          transition: all 0.3s ease;
+        }
+
+        .fm-total-timer.is-warning-5m {
+          background: rgba(245, 158, 11, 0.15);
+          border-color: rgba(245, 158, 11, 0.45);
+        }
+
+        .fm-total-timer.is-warning-1m {
+          background: rgba(245, 158, 11, 0.25);
+          border-color: rgba(245, 158, 11, 0.7);
+          box-shadow: 0 0 14px rgba(245, 158, 11, 0.35);
+        }
+
+        .fm-total-timer.is-warning-10s {
+          background: rgba(239, 68, 68, 0.25);
+          border-color: #ef4444;
+          box-shadow: 0 0 18px rgba(239, 68, 68, 0.45);
+          animation: pulse-ring 1s infinite;
+        }
+
+        .fm-timer-text {
+          display: flex;
+          flex-direction: column;
+          line-height: 1.1;
+        }
+
+        .fm-timer-label {
+          font-size: 0.625rem;
+          text-transform: uppercase;
+          color: rgba(255, 255, 255, 0.65);
+          font-weight: 700;
+          letter-spacing: 0.05em;
+        }
+
+        .fm-timer-digits {
+          font-family: monospace;
+          font-weight: 800;
+          font-size: 0.9375rem;
+          letter-spacing: 0.04em;
+        }
+
+        .fm-timer-badge {
+          font-size: 0.6875rem;
+          font-weight: 700;
+          padding: 2px 6px;
+          border-radius: 6px;
+          text-transform: uppercase;
+        }
+        .fm-timer-badge.warning {
+          background: #f59e0b;
+          color: #000000;
+        }
+        .fm-timer-badge.danger {
+          background: #ef4444;
+          color: #ffffff;
+        }
+
+        /* Subbar */
+        .fm-interview-subbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0.75rem 1rem;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          margin-bottom: 1.5rem;
+          font-size: 0.875rem;
+        }
+
+        .fm-subbar-left {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .fm-status-dot {
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+        }
+
+        .fm-candidate-name {
+          font-weight: 700;
+          color: #ffffff;
+        }
+
+        .fm-dot-sep {
+          color: rgba(255, 255, 255, 0.35);
+        }
+
+        .fm-q-pill {
+          padding: 2px 8px;
+          border-radius: 8px;
+          background: rgba(0, 217, 255, 0.15);
+          color: #00d9ff;
+          font-weight: 600;
+          font-size: 0.75rem;
+        }
+
+        .fm-grounding-indicator {
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.75);
+        }
+
+        /* 2-Column Grid */
+        .fm-interview-grid {
+          display: grid;
+          grid-template-columns: 1fr 340px;
+          gap: 1.5rem;
+        }
+
+        @media (max-width: 960px) {
+          .fm-interview-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .fm-interview-left {
+          display: flex;
+          flex-direction: column;
+          gap: 1.5rem;
+        }
+
+        /* Voice Panel */
+        .fm-voice-panel {
+          padding: 2.25rem 2rem;
+          text-align: center;
+        }
+
+        .fm-pre-session {
+          padding: 1rem 0;
+        }
+
+        .fm-pre-orb {
+          width: 80px;
+          height: 80px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #0753bf 0%, #00d9ff 100%);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 1.25rem auto;
+          box-shadow: 0 0 30px rgba(0, 217, 255, 0.4);
+        }
+
+        .fm-pre-title {
+          font-size: 1.35rem;
+          font-weight: 700;
+          margin-bottom: 0.5rem;
+        }
+
+        .fm-pre-desc {
+          font-size: 0.875rem;
+          line-height: 1.55;
+          color: var(--text-secondary);
+          max-width: 520px;
+          margin: 0 auto 1.5rem auto;
+        }
+
+        .fm-launch-btn {
+          padding: 0.85rem 2rem;
+          font-size: 1rem;
+        }
+
+        /* Active Voice Orb */
+        .fm-question-timer {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.35rem 1rem;
+          border-radius: 9999px;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          margin-bottom: 1.25rem;
+          font-size: 0.8125rem;
+        }
+
+        .fm-question-timer.is-active {
+          background: rgba(0, 217, 255, 0.12);
+          border-color: rgba(0, 217, 255, 0.45);
+        }
+
+        .fm-question-timer.is-warn-15s {
+          background: rgba(245, 158, 11, 0.18);
+          border-color: rgba(245, 158, 11, 0.6);
+        }
+
+        .fm-question-timer.is-warn-5s {
+          background: rgba(239, 68, 68, 0.22);
+          border-color: #ef4444;
+          box-shadow: 0 0 15px rgba(239, 68, 68, 0.35);
+        }
+
+        .q-timer-label {
+          color: rgba(255, 255, 255, 0.7);
+          font-weight: 500;
+        }
+
+        .q-timer-val {
+          font-family: monospace;
+          font-weight: 800;
+          font-size: 0.9375rem;
+          color: #00d9ff;
+        }
+
+        .q-warn-pill {
+          font-size: 0.6875rem;
+          font-weight: 700;
+          padding: 1px 6px;
+          border-radius: 6px;
+          text-transform: uppercase;
+        }
+        .q-warn-pill.amber {
+          background: #f59e0b;
+          color: #000;
+        }
+        .q-warn-pill.red {
+          background: #ef4444;
+          color: #fff;
+        }
+
+        .fm-voice-orb {
+          width: 96px;
+          height: 96px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 1.25rem auto;
+          transition: all 0.3s ease;
+        }
+
+        .fm-voice-orb.is-ai {
+          background: linear-gradient(135deg, #0753bf 0%, #00d9ff 100%);
+          border: 3px solid rgba(0, 217, 255, 0.6);
+          box-shadow: 0 0 30px rgba(0, 217, 255, 0.45);
+        }
+
+        .fm-voice-orb.is-listening {
+          background: linear-gradient(135deg, #15803d 0%, #22c55e 100%);
+          border: 3px solid rgba(34, 197, 94, 0.7);
+          box-shadow: 0 0 35px rgba(34, 197, 94, 0.55);
+        }
+
+        .fm-orb-title {
+          font-size: 1.35rem;
+          font-weight: 700;
+          margin-bottom: 0.5rem;
+        }
+
+        .fm-voice-state-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.4rem 1.15rem;
+          border-radius: 9999px;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1.5px solid;
+          font-size: 0.875rem;
+          font-weight: 600;
+          margin-bottom: 1rem;
+        }
+
+        .fm-spectrum {
+          display: flex;
+          gap: 6px;
+          justify-content: center;
+          align-items: center;
+          height: 36px;
+          margin-bottom: 0.75rem;
+        }
+
+        .fm-interim-box {
+          margin: 0.75rem auto;
+          padding: 0.75rem 1.25rem;
+          border-radius: 10px;
+          background: rgba(34, 197, 94, 0.12);
+          border: 1px solid rgba(34, 197, 94, 0.35);
+          color: #4ade80;
+          font-size: 0.9375rem;
+          font-style: italic;
+          max-width: 580px;
+        }
+
+        .fm-orb-controls {
+          display: flex;
+          gap: 0.75rem;
+          justify-content: center;
+          margin-top: 1rem;
+        }
+
+        .fm-orb-btn {
+          font-size: 0.8125rem;
+          padding: 0.5rem 1rem;
+        }
+
+        /* Transcript Panel */
+        .fm-transcript-panel {
+          padding: 1.75rem;
+          display: flex;
+          flex-direction: column;
+          max-height: 420px;
+        }
+
+        .fm-transcript-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 0.8125rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: rgba(255, 255, 255, 0.65);
+          margin-bottom: 1rem;
+        }
+
+        .fm-probing-tag {
+          color: #00d9ff;
+          text-transform: none;
+          font-weight: 700;
+        }
+
+        .fm-transcript-stream {
+          flex: 1;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          padding-right: 0.5rem;
+        }
+
+        .fm-transcript-empty {
+          color: rgba(255, 255, 255, 0.5);
+          font-size: 0.875rem;
+          text-align: center;
+          padding: 2rem 1rem;
+          font-style: italic;
+        }
+
+        .fm-turn-row {
+          display: flex;
+          gap: 0.75rem;
+          max-width: 88%;
+        }
+
+        .fm-turn-row.is-ai-turn {
+          align-self: flex-start;
+        }
+
+        .fm-turn-row.is-user-turn {
+          align-self: flex-end;
+          flex-direction: row-reverse;
+        }
+
+        .fm-turn-avatar {
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          background: rgba(0, 217, 255, 0.18);
+          color: #00d9ff;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .is-user-turn .fm-turn-avatar {
+          background: rgba(255, 255, 255, 0.18);
+          color: #ffffff;
+        }
+
+        .fm-turn-bubble {
+          padding: 0.85rem 1.15rem;
+          border-radius: 14px;
+          font-size: 0.9375rem;
+          line-height: 1.5;
+        }
+
+        .is-ai-turn .fm-turn-bubble {
+          background: rgba(7, 83, 191, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          color: #ffffff;
+        }
+
+        .is-user-turn .fm-turn-bubble {
+          background: rgba(0, 105, 233, 0.45);
+          border: 1px solid rgba(0, 217, 255, 0.4);
+          color: #ffffff;
+        }
+
+        .fm-turn-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.5rem;
+          margin-bottom: 0.35rem;
+        }
+
+        .fm-turn-author {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #00d9ff;
+        }
+
+        .is-user-turn .fm-turn-author {
+          color: rgba(255, 255, 255, 0.9);
+        }
+
+        .fm-turn-status {
+          font-size: 0.6875rem;
+          font-weight: 700;
+          padding: 1px 6px;
+          border-radius: 6px;
+        }
+        .fm-turn-status.is-timed-out {
+          background: rgba(245, 158, 11, 0.2);
+          color: #f59e0b;
+        }
+        .fm-turn-status.is-unanswered {
+          background: rgba(239, 68, 68, 0.2);
+          color: #ef4444;
+        }
+
+        .fm-turn-body {
+          word-break: break-word;
+        }
+
+        .fm-turn-source {
+          font-size: 0.6875rem;
+          color: rgba(255, 255, 255, 0.55);
+          margin-top: 0.35rem;
+          font-style: italic;
+        }
+
+        .fm-accessibility-box {
+          margin-top: 1rem;
+          padding-top: 0.75rem;
+          border-top: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .fm-accessibility-toggle {
+          background: none;
+          border: none;
+          color: rgba(255, 255, 255, 0.65);
+          font-size: 0.75rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          outline: none;
+        }
+        .fm-accessibility-toggle:hover {
+          color: #ffffff;
+        }
+
+        .fm-accessibility-form {
+          display: flex;
+          gap: 0.5rem;
+          margin-top: 0.5rem;
+        }
+
+        .fm-manual-input {
+          flex: 1;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.25);
+          border-radius: 8px;
+          padding: 0.5rem 0.75rem;
+          color: #ffffff;
+          font-size: 0.8125rem;
+          outline: none;
+        }
+        .fm-manual-input:focus {
+          border-color: #00d9ff;
+        }
+
+        .fm-manual-submit {
+          padding: 0.5rem 0.85rem;
+          font-size: 0.8125rem;
+        }
+
+        /* Sidebar Panel */
+        .fm-sidebar-panel {
+          padding: 1.75rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1.25rem;
+        }
+
+        .fm-sidebar-title {
+          font-size: 1rem;
+          font-weight: 700;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+          padding-bottom: 0.75rem;
+        }
+
+        .fm-timing-rules-card {
+          padding: 0.85rem 1rem;
+          border-radius: 12px;
+          background: rgba(0, 217, 255, 0.08);
+          border: 1px solid rgba(0, 217, 255, 0.25);
+        }
+        .timing-rules-head {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #00d9ff;
+          text-transform: uppercase;
+          margin-bottom: 0.35rem;
+        }
+        .timing-rules-list {
+          font-size: 0.8125rem;
+          color: var(--text-secondary);
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .fm-active-style-card {
+          padding: 0.85rem 1rem;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.07);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+        .active-style-label {
+          font-size: 0.6875rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          color: rgba(255, 255, 255, 0.6);
+          margin-bottom: 0.2rem;
+        }
+        .active-style-name {
+          font-size: 0.9375rem;
+          font-weight: 700;
+          color: #00d9ff;
+        }
+        .active-style-comps {
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.75);
+          margin-top: 0.2rem;
+        }
+
+        .fm-mic-status-card {
+          padding: 0.85rem 1rem;
+          border-radius: 12px;
+          border: 1px solid;
+        }
+        .fm-mic-status-card.is-granted {
+          background: rgba(34, 197, 94, 0.1);
+          border-color: rgba(34, 197, 94, 0.3);
+        }
+        .fm-mic-status-card.is-denied {
+          background: rgba(239, 68, 68, 0.1);
+          border-color: rgba(239, 68, 68, 0.3);
+        }
+        .mic-status-row {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-weight: 700;
+          font-size: 0.8125rem;
+        }
+        .is-granted .mic-status-row {
+          color: #4ade80;
+        }
+        .is-denied .mic-status-row {
+          color: #f87171;
+        }
+        .mic-status-desc {
+          font-size: 0.75rem;
+          color: var(--text-secondary);
+          margin-top: 0.3rem;
+          line-height: 1.4;
+        }
+
+        .fm-projects-box {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .projects-box-head {
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          color: rgba(255, 255, 255, 0.6);
+        }
+        .projects-box-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .projects-empty {
+          font-size: 0.8125rem;
+          color: rgba(255, 255, 255, 0.6);
+          font-style: italic;
+        }
+        .proj-item-card {
+          padding: 0.6rem 0.85rem;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        .proj-item-name {
+          font-weight: 700;
+          font-size: 0.8125rem;
+          color: #00d9ff;
+        }
+        .proj-item-src {
+          font-size: 0.6875rem;
+          color: rgba(255, 255, 255, 0.55);
+          margin-top: 0.1rem;
+        }
+
+        .fm-ai-prompter-tip {
+          margin-top: auto;
+          padding: 0.75rem 0.85rem;
+          border-radius: 10px;
+          background: rgba(0, 217, 255, 0.08);
+          border: 1px solid rgba(0, 217, 255, 0.2);
+          display: flex;
+          align-items: flex-start;
+          gap: 0.5rem;
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.8);
+          line-height: 1.45;
         }
       `}</style>
-    </main>
+    </PageShell>
   );
 }

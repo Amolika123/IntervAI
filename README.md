@@ -20,6 +20,63 @@ The interviewer conducts a live voice conversation—speaking every question alo
 
 ---
 
+## 🎨 Cinematic Liquid-Glass Motion Landing Page Redesign
+
+The IntervAI landing page has been redesigned with a cinematic, editorial, motion-driven visual identity:
+
+```
++-------------------------------------------------------------------------------+
+| [Menu] IntervAI                                                • Upload Resume|
+| |                                                                           | |
+| | (Architectural vertical rule)               (Architectural vertical rule) | |
+| |                                                                           | |
+| | RESUME-GROUNDED AI TECHNICAL INTERVIEWER                                  | |
+| |                                                      +------------------+ | |
+| | Your work.                                           | Inside IntervAI  | | |
+| | Your interview.                                      | //01             | | |
+| |                                                      |                  | | |
+| | An AI technical interviewer that understands         | 1. Resume...     | | |
+| | your resume and projects, asks deeper technical      | 2. Project...    | | |
+| | questions, and adapts to your answers...             | 3. Adaptive...   | | |
+| |                                                      |                  | | |
+| | [Start your interview ->]                            | |||||||||||||||| | |
+| |                                                      | VOICE INTERVIEW..| | |
+| |                                                      +------------------+ | |
++-------------------------------------------------------------------------------+
+| • BUILT AROUND YOUR EXPERIENCE | ~~~ Capability Marquee (20s Infinite Loop) ~~~
++-------------------------------------------------------------------------------+
+```
+
+### 1. Untinted Full-Screen Video Background with rAF Looping
+- **Video Source:** Bright iridescent bubble/glass-sphere video (`hf_20260816_125506_3a597378-ec85-4ebd-bd22-03b45508ac62.mp4`).
+- **Completely Untinted:** 100% untinted presentation without dark scrims, artificial overlays, or heavy opacity filters.
+- **Root Cause & Fix:** Initial opacity state previously defaulted to 0 and awaited `loadeddata`, which failed to trigger if already loaded during SSR hydration. Fixed by defaulting opacity to 100%, binding `canplay`/`loadeddata`/`timeupdate`, handling autoplay policies with programmatic kickstart, and implementing a smooth requestAnimationFrame fade loop (0.5s fade-out near end, 100ms reset delay, 0.5s fade-in replay).
+- **Resilience:** Fallback `#c2ccd3` background and full respect for `prefers-reduced-motion`.
+
+### 2. SVG Liquid-Glass Refraction Card ([`LiquidGlassCard.tsx`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/components/landing/LiquidGlassCard.tsx))
+- **Inline SVG Displacement Filter ([`LiquidGlassFilter.tsx`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/components/landing/LiquidGlassFilter.tsx)):** Defines `#liquid-glass-refraction` using `feTurbulence` (`baseFrequency="0.012 0.015"`, 3 octaves), alpha expansion (`0 0 0 100 0`), Gaussian blur (`stdDeviation="45"`), edge mask (`slope="-1.3" intercept="1"`), chromatic dispersion across 3 passes (red scale 65, green scale 56, blue scale 47), and screen blend.
+- **Root Cause & Fix:** `filterUnits="userSpaceOnUse"` previously collapsed the percentage filter region (-30% to 160%) to 0x0 against an off-screen SVG root. Fixed by setting `primitiveUnits="userSpaceOnUse"` and default `objectBoundingBox` for `filterUnits`. Removed heavy `backdrop-filter: blur(24px)` on the frost layer that washed out the displacement canvas, and composited `feMerge` to preserve crisp center legibility while rendering chromatic dispersion along the perimeter.
+- **Viewport-Aligned Duplicate Canvas:** Uses a self-starting 60fps `requestAnimationFrame` loop that calculates `getBoundingClientRect()`, scales and positions the duplicate background video frame with exact `object-fit: cover` math at DPR 1 without reading pixel data.
+
+### 3. Chamfered Action Button ([`ChamferButton.tsx`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/components/landing/ChamferButton.tsx))
+- **Architectural Shape:** Dual-opposite ~14px clipped corners (`clip-path: polygon(...)`).
+- **Crisp SVG Stroke:** Inline SVG polygon outline with `vectorEffect="non-scaling-stroke"` ensuring razor-sharp 1px black stroke across all DPI displays.
+- **Responsive Treatment:** Frosted translucent backing on mobile (<640px), transparent background on desktop (>=640px), and right-arrow hover slide.
+- **Action Grounding:** Directly triggers the real resume PDF upload modal and file picker.
+
+### 4. Fullscreen Slide-In Drawer Menu ([`SlideMenu.tsx`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/components/landing/SlideMenu.tsx))
+- **Drawer Architecture:** 380px drawer on desktop, 100% full-width on mobile, sliding from left edge over softly blurred backdrop (`backdrop-filter: blur(16px)`).
+- **Staggered Links:** 5 sequential navigation items with delays of 150ms, 225ms, 300ms, 375ms, 450ms (*How It Works*, *Interview Styles*, *Features*, *Upload Resume*, *About IntervAI*).
+- **Navbar Styling:** Complete elimination of browser-default button appearance (`border: none; background: transparent; outline: none; appearance: none; box-shadow: none;`) with intentional `:focus-visible` outline for keyboard navigation.
+- **Accessibility & Dismissal:** Full focus management (focuses close button on open, restores focus to trigger on close), Escape key dismissal, backdrop click dismissal, and `aria-expanded`/`aria-controls` bindings.
+
+### 5. Capability Marquee ([`CapabilityMarquee.tsx`](file:///c:/Users/amoli/OneDrive/Desktop/IntervAI/src/components/landing/CapabilityMarquee.tsx))
+- **Pinned Preamble:** Left-aligned `BUILT AROUND YOUR EXPERIENCE` status badge with black dot indicator.
+- **Root Cause & Fix:** The moving track's `width: max-content` previously caused default flex `min-width: auto` to expand beyond viewport bounds, clipping the left static label. Fixed by enforcing `min-width: 0;` on `.strip-marquee-container` and `flex-shrink: 0;` on `.strip-left-label`.
+- **Seamless Ticker:** 20-second linear horizontal infinite loop showcasing product capabilities (*Resume Understanding*, *GitHub Project Context*, *Real-Time Voice Interview*, *Adaptive Technical Questions*, *FAANG Style*, *MANGOS Style*, *Big 4 Style*).
+
+---
+
 ## 🏗️ Architecture: Next.js Frontend + FastAPI Python Backend
 
 IntervAI operates as a high-performance **hybrid architecture**:

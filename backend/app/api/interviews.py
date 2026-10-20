@@ -54,6 +54,15 @@ async def start_interview(
                 status_code=422,
                 detail="No technical projects could be identified from this resume. A technical interview requires at least one project. Please ensure your resume includes distinct projects with descriptions before starting."
             )
+        valid_projs = [
+            p for p in candidate_context.projects
+            if p.name and not any(ph in p.name.lower() for ph in ("primary technical project", "unknown project", "general experience"))
+        ]
+        if not valid_projs:
+            raise HTTPException(
+                status_code=422,
+                detail="Resume parsing produced only generic placeholder projects. Please ensure your resume includes distinct named projects with descriptions before starting."
+            )
         context_dict = candidate_context.model_dump()
 
         interview = Interview(
@@ -113,17 +122,20 @@ async def start_interview(
         raise HTTPException(status_code=500, detail="Failed to start interview session")
 
 
+@router.get("/session")
 @router.post("/session")
 async def create_session(
-    payload: InterviewSessionRequest,
+    payload: Optional[InterviewSessionRequest] = None,
+    interviewId: Optional[str] = None,
+    id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     try:
-        interview_id = payload.interviewId
-        if not interview_id:
+        resolved_id = (payload.interviewId if payload else None) or interviewId or id
+        if not resolved_id:
             raise HTTPException(status_code=400, detail="interviewId is required")
 
-        interview = db.query(Interview).filter(Interview.id == interview_id).first()
+        interview = db.query(Interview).filter(Interview.id == resolved_id).first()
         if not interview:
             raise HTTPException(status_code=404, detail="Interview not found")
 
@@ -137,30 +149,59 @@ async def create_session(
 
         first_planned = (
             db.query(InterviewPlannedQuestion)
-            .filter(InterviewPlannedQuestion.interviewId == interview_id, InterviewPlannedQuestion.order == 1)
+            .filter(InterviewPlannedQuestion.interviewId == resolved_id, InterviewPlannedQuestion.order == 1)
             .first()
         )
 
         p_list = candidate_context.get("projects", [])
-        p1_name = p_list[0].get("name") if p_list else "your primary project"
+        if not p_list or len(p_list) == 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Candidate context is missing project dossiers. Please re-upload resume."
+            )
 
-        default_opening = f"Hello {candidate_context.get('candidate', {}).get('name', 'Candidate')}. Let's begin by discussing {p1_name}. Can you walk me through the technical implementation and design decisions?"
+        valid_projects = [
+            p for p in p_list
+            if p.get("name") and not any(ph in p.get("name", "").lower() for ph in ("primary technical project", "unknown project", "general experience"))
+        ]
+        if not valid_projects:
+            raise HTTPException(
+                status_code=422,
+                detail="Candidate context contains only generic placeholder projects. Please re-upload resume with distinct project headings."
+            )
+        target_project = valid_projects[0]
+        p1_name = target_project.get("name", "your core project")
+
+        cand_info = candidate_context.get("candidate", {})
+        cand_name = cand_info.get("name", "Candidate")
+
+        default_opening = f"Hello {cand_name}. To begin our technical discussion in {p1_name}, walk me through the core architecture and key engineering decisions you made."
         opening_q_text = first_planned.questionText if first_planned else default_opening
-        opening_q_source = first_planned.groundingSource if first_planned else f"project:{p1_name}:overview"
+        opening_q_source = first_planned.groundingSource if first_planned else f"project:{p1_name}:architecture"
 
+        # Guard against generic primary project questions in first planned question
         if first_planned:
+            if "primary project" in first_planned.questionText.lower() or "primary technical project" in first_planned.questionText.lower():
+                first_planned.questionText = re.sub(r"(?i)your primary project|primary technical project", p1_name, first_planned.questionText)
+                first_planned.groundingSource = f"project:{p1_name}:architecture"
+                opening_q_text = first_planned.questionText
+                opening_q_source = first_planned.groundingSource
             first_planned.isAsked = True
             db.commit()
 
         api_key = settings.OPENAI_API_KEY
         if not api_key:
-            # Mock mode for development without OpenAI Realtime key
+            # Mock mode for development / browser-native SpeechEngine
             return {
                 "success": True,
+                "interviewId": interview.id,
                 "mockMode": True,
                 "clientSecret": "mock_ephemeral_token_dev",
                 "systemInstructions": system_prompt,
                 "candidateContext": candidate_context,
+                "candidateName": cand_name,
+                "projects": p_list,
+                "interviewStyle": style,
                 "style": style,
                 "openingQuestion": opening_q_text,
                 "openingSource": opening_q_source
@@ -193,11 +234,18 @@ async def create_session(
 
                 if res.status_code != 200:
                     err_text = res.text
-                    logger.error(f"OpenAI Realtime Session creation error: {err_text}")
+                    logger.warning(f"OpenAI Realtime Session creation returned status {res.status_code}: {err_text}. Falling back to Web Speech engine.")
                     return {
-                        "success": False,
-                        "error": "Failed to create OpenAI Realtime session",
-                        "details": err_text,
+                        "success": True,
+                        "interviewId": interview.id,
+                        "mockMode": True,
+                        "clientSecret": "mock_ephemeral_token_dev",
+                        "systemInstructions": system_prompt,
+                        "candidateContext": candidate_context,
+                        "candidateName": cand_name,
+                        "projects": p_list,
+                        "interviewStyle": style,
+                        "style": style,
                         "openingQuestion": opening_q_text,
                         "openingSource": opening_q_source
                     }
@@ -207,10 +255,14 @@ async def create_session(
             logger.warning(f"Realtime session creation call error: {e}")
             return {
                 "success": True,
+                "interviewId": interview.id,
                 "mockMode": True,
                 "clientSecret": "mock_ephemeral_token_dev",
                 "systemInstructions": system_prompt,
                 "candidateContext": candidate_context,
+                "candidateName": cand_name,
+                "projects": p_list,
+                "interviewStyle": style,
                 "style": style,
                 "openingQuestion": opening_q_text,
                 "openingSource": opening_q_source
@@ -229,10 +281,14 @@ async def create_session(
 
         return {
             "success": True,
+            "interviewId": interview.id,
             "clientSecret": client_secret,
             "sessionData": session_data,
             "systemInstructions": system_prompt,
             "candidateContext": candidate_context,
+            "candidateName": cand_name,
+            "projects": p_list,
+            "interviewStyle": style,
             "style": style,
             "openingQuestion": opening_q_text,
             "openingSource": opening_q_source
@@ -253,14 +309,15 @@ async def save_answer(
     db: Session = Depends(get_db)
 ):
     try:
-        if not payload.interviewId or not payload.questionText:
+        q_text = payload.get_question_text()
+        if not payload.interviewId or not q_text:
             raise HTTPException(
                 status_code=400,
                 detail="Missing required fields (interviewId, questionText)"
             )
 
         status = payload.status or "answered"
-        raw_transcript = (payload.transcript or "").strip()
+        raw_transcript = payload.get_transcript().strip()
         if not raw_transcript and status == "answered":
             status = "unanswered"
 
@@ -269,8 +326,8 @@ async def save_answer(
         question = InterviewQuestion(
             interviewId=payload.interviewId,
             order=payload.order or 1,
-            questionText=payload.questionText,
-            groundingSource=payload.groundingSource or "resume:general",
+            questionText=q_text,
+            groundingSource=payload.get_grounding_source(),
             projectId=payload.projectId
         )
         db.add(question)
@@ -299,8 +356,11 @@ async def save_answer(
             "answerId": answer.id,
             "status": status,
             "nextQuestion": next_q,
+            "question": next_q,
             "nextOrder": next_order,
-            "nextGroundingSource": next_source
+            "order": next_order,
+            "nextGroundingSource": next_source,
+            "groundingSource": next_source
         }
 
     except HTTPException:

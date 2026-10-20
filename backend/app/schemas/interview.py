@@ -31,11 +31,26 @@ class InterviewSessionResponse(BaseModel):
 class InterviewAnswerRequest(BaseModel):
     interviewId: str
     order: Optional[int] = 1
-    questionText: str
+    questionText: Optional[str] = None
+    question: Optional[str] = None
     groundingSource: Optional[str] = "resume:general"
+    grounding_source: Optional[str] = None
     transcript: Optional[str] = ""
+    answer: Optional[str] = None
     status: Optional[str] = "answered"
     projectId: Optional[str] = None
+    style: Optional[str] = None
+
+    def get_question_text(self) -> str:
+        return (self.questionText or self.question or "").strip()
+
+    def get_transcript(self) -> str:
+        if self.transcript is not None and self.transcript != "":
+            return self.transcript
+        return self.answer or ""
+
+    def get_grounding_source(self) -> str:
+        return self.groundingSource or self.grounding_source or "resume:general"
 
 
 class InterviewAnswerResponse(BaseModel):

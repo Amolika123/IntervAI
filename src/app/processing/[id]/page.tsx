@@ -6,16 +6,16 @@ import {
   CheckCircle2,
   Loader2,
   Cpu,
-  Sparkles,
   AlertCircle,
   ArrowRight,
   ShieldCheck,
   Code2,
   Layers,
   Building2,
-  Zap
+  Zap,
 } from 'lucide-react';
 import { INTERVIEW_STYLES, InterviewStyleId } from '@/lib/interviewer/styles';
+import PageShell from '@/components/layout/PageShell';
 
 interface ProcessingProps {
   params: Promise<{ id: string }>;
@@ -75,7 +75,7 @@ export default function ProcessingPage({ params }: ProcessingProps) {
         for (let i = 0; i < steps.length; i++) {
           if (!mounted) return;
           setActiveStep(i);
-          await new Promise(r => setTimeout(r, 550));
+          await new Promise((r) => setTimeout(r, 550));
         }
 
         if (mounted) {
@@ -103,7 +103,7 @@ export default function ProcessingPage({ params }: ProcessingProps) {
       const res = await fetch('/api/interview/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resumeId, style: selectedStyle })
+        body: JSON.stringify({ resumeId, style: selectedStyle }),
       });
 
       const data = await res.json();
@@ -119,89 +119,65 @@ export default function ProcessingPage({ params }: ProcessingProps) {
     }
   };
 
-  const candidateName = candidateData?.candidate?.name || 'Candidate';
   const projectsCount = candidateData?.projects?.length || 0;
 
   return (
-    <main style={{ minHeight: '100vh', padding: '2.5rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ maxWidth: isProcessing ? '640px' : '980px', width: '100%', transition: 'all 0.4s ease' }}>
-        
+    <PageShell
+      title={isProcessing ? 'Analyzing Candidate Dossier' : 'Interview Style Calibration'}
+      badge={
+        <span className="fm-proc-badge">
+          <Layers size={13} />
+          <span>Stage 02 of 04</span>
+        </span>
+      }
+      maxWidth={isProcessing ? '640px' : '1080px'}
+    >
+      <div className="fm-proc-container">
         {/* State 1: Processing Stages */}
         {isProcessing && (
-          <div className="glass-panel" style={{ padding: '3rem 2.5rem', textAlign: 'center' }}>
-            <div style={{
-              width: '56px',
-              height: '56px',
-              borderRadius: '16px',
-              background: 'var(--gradient-primary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 1.25rem auto',
-              boxShadow: '0 8px 25px rgba(99, 102, 241, 0.4)'
-            }}>
-              <Cpu size={28} color="#ffffff" />
+          <div className="glass-panel fm-proc-panel">
+            <div className="fm-proc-icon-wrap">
+              <Cpu size={28} color="#00f0ff" />
             </div>
 
-            <h2 style={{ fontSize: '1.8rem', fontWeight: 800, marginBottom: '0.5rem' }}>
+            <h2 className="fm-proc-title">
               Analyzing Your <span className="gradient-text">Resume & Projects</span>
             </h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: '2rem' }}>
+            <p className="fm-proc-subtitle">
               Extracting candidate profile, inspecting GitHub READMEs, and locking question grounding rules...
             </p>
 
             {errorMessage ? (
-              <div style={{
-                padding: '1.25rem',
-                borderRadius: '12px',
-                background: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#f87171',
-                textAlign: 'center'
-              }}>
-                <AlertCircle size={32} style={{ marginBottom: '0.5rem' }} />
-                <p style={{ fontWeight: 600, marginBottom: '0.75rem' }}>{errorMessage}</p>
+              <div className="fm-proc-error">
+                <AlertCircle size={28} />
+                <p>{errorMessage}</p>
                 <button onClick={() => router.push('/')} className="btn-secondary">
                   Return to Upload
                 </button>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'left' }}>
+              <div className="fm-steps-list">
                 {steps.map((step, idx) => {
                   const isDone = idx < activeStep;
                   const isCurrent = idx === activeStep;
 
                   return (
-                    <div key={idx} style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '14px',
-                      padding: '12px 16px',
-                      borderRadius: '10px',
-                      background: isCurrent ? 'rgba(99, 102, 241, 0.08)' : 'rgba(255, 255, 255, 0.02)',
-                      border: isCurrent ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
-                      transition: 'all 0.3s ease'
-                    }}>
-                      <div>
+                    <div
+                      key={idx}
+                      className={`fm-step-item ${isCurrent ? 'is-current' : ''} ${isDone ? 'is-done' : ''}`}
+                    >
+                      <div className="fm-step-indicator">
                         {isDone ? (
-                          <CheckCircle2 size={22} color="var(--accent-cyan)" />
+                          <CheckCircle2 size={20} color="#22c55e" />
                         ) : isCurrent ? (
-                          <Loader2 size={22} color="var(--accent-indigo)" style={{ animation: 'spin 1s linear infinite' }} />
+                          <Loader2 size={20} color="#00f0ff" className="spin-icon" />
                         ) : (
-                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', border: '2px solid var(--text-muted)' }} />
+                          <div className="fm-step-pending-dot" />
                         )}
                       </div>
-                      <div>
-                        <div style={{
-                          fontWeight: isCurrent ? 700 : 500,
-                          color: isCurrent ? 'var(--text-primary)' : isDone ? 'var(--text-secondary)' : 'var(--text-muted)',
-                          fontSize: '0.95rem'
-                        }}>
-                          {step.label}
-                        </div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                          {step.detail}
-                        </div>
+                      <div className="fm-step-content">
+                        <div className="fm-step-label">{step.label}</div>
+                        <div className="fm-step-detail">{step.detail}</div>
                       </div>
                     </div>
                   );
@@ -213,23 +189,10 @@ export default function ProcessingPage({ params }: ProcessingProps) {
 
         {/* State 2: Choose Your Interview Style Section */}
         {!isProcessing && (
-          <div className="glass-panel" style={{ padding: '2.5rem 2rem' }}>
-            
+          <div className="glass-panel fm-style-panel">
             {/* Header */}
-            <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-              <div style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '6px 16px',
-                borderRadius: '30px',
-                background: projectsCount > 0 ? 'rgba(99, 102, 241, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                border: projectsCount > 0 ? '1px solid rgba(99, 102, 241, 0.25)' : '1px solid rgba(239, 68, 68, 0.3)',
-                color: projectsCount > 0 ? 'var(--accent-indigo)' : '#f87171',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                marginBottom: '1rem'
-              }}>
+            <div className="fm-style-header">
+              <div className={`fm-dossier-pill ${projectsCount === 0 ? 'is-warning' : ''}`}>
                 {projectsCount > 0 ? <ShieldCheck size={16} /> : <AlertCircle size={16} />}
                 <span>
                   {projectsCount > 0
@@ -238,248 +201,500 @@ export default function ProcessingPage({ params }: ProcessingProps) {
                 </span>
               </div>
 
-              <h1 style={{ fontSize: '2.2rem', fontWeight: 800, letterSpacing: '-0.5px', marginBottom: '0.5rem' }}>
+              <h1 className="fm-style-title-main">
                 Choose Your <span className="gradient-text">Interview Style</span>
               </h1>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', maxWidth: '640px', margin: '0 auto' }}>
-                Your resume claims dictate <strong>WHAT</strong> is asked. The selected company preset determines <strong>HOW</strong> deeply the AI interviewer probes your architecture, trade-offs, and implementation.
+              <p className="fm-style-rule-text">
+                Your resume claims dictate <strong>WHAT</strong> is asked. The selected company preset determines{' '}
+                <strong>HOW</strong> deeply the AI interviewer probes your architecture, trade-offs, and implementation.
               </p>
             </div>
 
-            {/* Warning when project extraction failed / yielded 0 projects */}
+            {/* Warning when project extraction failed */}
             {projectsCount === 0 && (
-              <div style={{
-                marginBottom: '2rem',
-                padding: '16px 20px',
-                borderRadius: '12px',
-                background: 'rgba(239, 68, 68, 0.08)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#fca5a5',
-                fontSize: '0.95rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                lineHeight: 1.5
-              }}>
-                <AlertCircle size={24} style={{ flexShrink: 0, color: '#f87171' }} />
+              <div className="fm-project-warning">
+                <AlertCircle size={24} className="warning-icon" />
                 <div>
-                  <strong>Project extraction failed or no projects found:</strong> IntervAI conducts technical voice interviews strictly grounded in candidate project implementation. Please upload a resume with clearly listed projects and descriptions to start an interview.
+                  <strong>Project extraction note:</strong> No specific technical projects were parsed from your resume.
+                  The interviewer will fall back to general role experience. Uploading a resume with project sections yields optimal grounded questioning.
                 </div>
               </div>
             )}
 
             {/* Configurable Style Cards Grid */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-              gap: '1.25rem',
-              marginBottom: '2rem'
-            }}>
+            <div className="fm-styles-grid">
               {(Object.keys(INTERVIEW_STYLES) as InterviewStyleId[]).map((styleId) => {
                 const config = INTERVIEW_STYLES[styleId];
                 const isSelected = selectedStyle === styleId;
 
                 const getIcon = () => {
-                  if (styleId === 'FAANG') return <Code2 size={24} color={config.color} />;
-                  if (styleId === 'MANGOS') return <Zap size={24} color={config.color} />;
-                  return <Building2 size={24} color={config.color} />;
+                  if (styleId === 'FAANG') return <Code2 size={22} color="#00f0ff" />;
+                  if (styleId === 'MANGOS') return <Zap size={22} color="#00f0ff" />;
+                  return <Building2 size={22} color="#00f0ff" />;
                 };
 
                 return (
                   <div
                     key={styleId}
                     onClick={() => setSelectedStyle(styleId)}
-                    style={{
-                      padding: '1.5rem',
-                      borderRadius: '16px',
-                      cursor: 'pointer',
-                      border: isSelected ? `2px solid ${config.color}` : '1px solid var(--border-color)',
-                      background: isSelected
-                        ? 'rgba(22, 28, 46, 0.95)'
-                        : 'var(--gradient-card)',
-                      boxShadow: isSelected
-                        ? `0 12px 30px -10px ${config.color}40, inset 0 0 15px ${config.color}15`
-                        : 'none',
-                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'space-between',
-                      position: 'relative'
+                    className={`fm-style-card-choice ${isSelected ? 'is-selected' : ''}`}
+                    tabIndex={0}
+                    role="radio"
+                    aria-checked={isSelected}
+                    onKeyDown={(e) => {
+                      if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault();
+                        setSelectedStyle(styleId);
+                      }
                     }}
                   >
-                    <div>
-                      {/* Top Row: Icon, Title & Radio Indicator */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div style={{
-                            width: '42px',
-                            height: '42px',
-                            borderRadius: '10px',
-                            background: 'rgba(255, 255, 255, 0.05)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            border: `1px solid ${config.color}30`
-                          }}>
-                            {getIcon()}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 800, fontSize: '1.25rem', color: isSelected ? '#ffffff' : 'var(--text-primary)' }}>
-                              {config.name}
-                            </div>
-                            <span style={{
-                              fontSize: '0.725rem',
-                              fontWeight: 700,
-                              textTransform: 'uppercase',
-                              color: config.color,
-                              letterSpacing: '0.5px'
-                            }}>
-                              {config.badge}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Radio selection indicator */}
-                        <div style={{
-                          width: '22px',
-                          height: '22px',
-                          borderRadius: '50%',
-                          border: isSelected ? `2px solid ${config.color}` : '2px solid var(--text-muted)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          background: isSelected ? config.color : 'transparent',
-                          transition: 'all 0.2s ease'
-                        }}>
-                          {isSelected && <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ffffff' }} />}
+                    <div className="choice-header">
+                      <div className="choice-title-group">
+                        <div className="choice-icon-wrap">{getIcon()}</div>
+                        <div>
+                          <div className="choice-name">{config.name}</div>
+                          <div className="choice-subtitle">{config.badge}</div>
                         </div>
                       </div>
-
-                      {/* Included Companies Tags */}
-                      <div style={{ marginBottom: '1rem' }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '6px' }}>
-                          Companies Covered:
-                        </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                          {config.companies.map((company, i) => (
-                            <span
-                              key={i}
-                              style={{
-                                fontSize: '0.75rem',
-                                padding: '3px 8px',
-                                borderRadius: '6px',
-                                background: isSelected ? `${config.color}20` : 'rgba(255, 255, 255, 0.05)',
-                                color: isSelected ? '#ffffff' : 'var(--text-secondary)',
-                                border: isSelected ? `1px solid ${config.color}40` : '1px solid rgba(255, 255, 255, 0.08)',
-                                fontWeight: 500
-                              }}
-                            >
-                              {company}
-                            </span>
-                          ))}
-                        </div>
+                      <div className={`choice-radio ${isSelected ? 'is-checked' : ''}`}>
+                        {isSelected && <div className="choice-radio-inner" />}
                       </div>
+                    </div>
 
-                      {/* Tagline & Description */}
-                      <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '1rem' }}>
-                        {config.description}
-                      </p>
+                    <div className="choice-companies">
+                      <strong>Companies:</strong> {config.companies.join(', ')}
+                    </div>
 
-                      {/* Key Focus Points */}
-                      <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: '6px' }}>
-                          Interview Focus Areas:
+                    <p className="choice-desc">{config.description}</p>
+
+                    <div className="choice-probing-points">
+                      <div className="probing-label">Core Probing Vectors:</div>
+                      {config.focusAreas.map((point: string, i: number) => (
+                        <div key={i} className="probing-item">
+                          <CheckCircle2 size={13} color="#00d9ff" />
+                          <span>{point}</span>
                         </div>
-                        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          {config.focusAreas.slice(0, 3).map((item, i) => (
-                            <li key={i} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ color: config.color, fontWeight: 700 }}>•</span>
-                              <span>{item}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+                      ))}
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Error Message if starting fails */}
+            {/* Explanatory Rule Callout */}
+            <div className="fm-rule-callout">
+              <span className="rule-dot" />
+              <span>
+                &ldquo;Your resume determines what is asked. Your selected interview style determines how deeply the interviewer probes.&rdquo;
+              </span>
+            </div>
+
+            {/* Error Message if Launch Failed */}
             {errorMessage && (
-              <div style={{
-                marginBottom: '1.5rem',
-                padding: '12px 16px',
-                borderRadius: '10px',
-                background: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#f87171',
-                fontSize: '0.9rem',
-                textAlign: 'center'
-              }}>
-                {errorMessage}
+              <div className="fm-launch-error">
+                <AlertCircle size={18} />
+                <span>{errorMessage}</span>
               </div>
             )}
 
-            {/* Bottom Bar: Grounding Disclaimer & Launch Button */}
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '1.25rem',
-              paddingTop: '1rem',
-              borderTop: '1px solid var(--border-color)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '500px' }}>
-                <Sparkles size={16} color="var(--accent-indigo)" style={{ flexShrink: 0 }} />
-                <span>
-                  Preset: <strong>{INTERVIEW_STYLES[selectedStyle].name}</strong> • Questions are inspired by public interview patterns and grounded 100% in your resume projects.
-                </span>
-              </div>
-
-              {projectsCount === 0 ? (
-                <button
-                  onClick={() => router.push('/')}
-                  className="btn-secondary"
-                  style={{ padding: '14px 28px', fontSize: '1rem', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#fca5a5' }}
-                >
-                  <span>Upload a Resume with Projects</span>
-                  <ArrowRight size={18} />
-                </button>
-              ) : (
-                <button
-                  onClick={handleStartInterview}
-                  disabled={isStarting}
-                  className="btn-primary"
-                  style={{ padding: '14px 32px', fontSize: '1rem' }}
-                >
-                  {isStarting ? (
-                    <>
-                      <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
-                      <span>Configuring Interviewer...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Start Technical Interview</span>
-                      <ArrowRight size={18} />
-                    </>
-                  )}
-                </button>
-              )}
+            {/* Launch Action */}
+            <div className="fm-launch-action">
+              <button
+                type="button"
+                onClick={handleStartInterview}
+                disabled={isStarting}
+                className="btn-primary fm-start-btn"
+              >
+                {isStarting ? (
+                  <>
+                    <Loader2 size={18} className="spin-icon" />
+                    <span>Calibrating Voice Session...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Start Interview Session ({INTERVIEW_STYLES[selectedStyle].name})</span>
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
             </div>
-
           </div>
         )}
-
       </div>
 
-      <style jsx global>{`
+      <style jsx>{`
+        .fm-proc-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 3px 10px;
+          border-radius: 9999px;
+          background: rgba(0, 217, 255, 0.15);
+          border: 1px solid rgba(0, 217, 255, 0.35);
+          color: #00d9ff;
+          font-size: 0.75rem;
+          font-weight: 600;
+        }
+
+        .fm-proc-container {
+          width: 100%;
+        }
+
+        /* Processing Panel */
+        .fm-proc-panel {
+          padding: 3.5rem 2.5rem;
+          text-align: center;
+        }
+
+        .fm-proc-icon-wrap {
+          width: 60px;
+          height: 60px;
+          border-radius: 18px;
+          background: rgba(0, 217, 255, 0.15);
+          border: 1px solid rgba(0, 217, 255, 0.35);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 1.5rem auto;
+          box-shadow: 0 0 25px rgba(0, 217, 255, 0.3);
+        }
+
+        .fm-proc-title {
+          font-size: 1.85rem;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          margin-bottom: 0.5rem;
+        }
+
+        .fm-proc-subtitle {
+          color: var(--text-secondary);
+          font-size: 0.9375rem;
+          max-width: 480px;
+          margin: 0 auto 2.25rem auto;
+          line-height: 1.5;
+        }
+
+        .fm-proc-error {
+          padding: 1.5rem;
+          border-radius: 14px;
+          background: rgba(239, 68, 68, 0.12);
+          border: 1px solid rgba(239, 68, 68, 0.35);
+          color: #fca5a5;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .fm-steps-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.85rem;
+          text-align: left;
+        }
+
+        .fm-step-item {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          padding: 0.85rem 1.15rem;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          transition: all 0.25s ease;
+        }
+
+        .fm-step-item.is-current {
+          background: rgba(0, 217, 255, 0.12);
+          border-color: rgba(0, 217, 255, 0.45);
+          box-shadow: 0 0 15px rgba(0, 217, 255, 0.15);
+        }
+
+        .fm-step-indicator {
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 22px;
+          height: 22px;
+        }
+
+        .fm-step-pending-dot {
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          border: 2px solid rgba(255, 255, 255, 0.25);
+        }
+
+        .fm-step-content {
+          flex: 1;
+        }
+
+        .fm-step-label {
+          font-size: 0.9375rem;
+          font-weight: 600;
+          color: #ffffff;
+        }
+
+        .fm-step-item.is-done .fm-step-label {
+          color: rgba(255, 255, 255, 0.85);
+        }
+
+        .fm-step-detail {
+          font-size: 0.8125rem;
+          color: rgba(255, 255, 255, 0.6);
+        }
+
+        /* Style Selection Panel */
+        .fm-style-panel {
+          padding: 3rem 2.5rem;
+        }
+
+        .fm-style-header {
+          text-align: center;
+          max-width: 720px;
+          margin: 0 auto 2.5rem auto;
+        }
+
+        .fm-dossier-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.35rem 1rem;
+          border-radius: 9999px;
+          background: rgba(0, 217, 255, 0.14);
+          border: 1px solid rgba(0, 217, 255, 0.35);
+          color: #00d9ff;
+          font-size: 0.8125rem;
+          font-weight: 600;
+          margin-bottom: 1rem;
+        }
+
+        .fm-dossier-pill.is-warning {
+          background: rgba(245, 158, 11, 0.15);
+          border-color: rgba(245, 158, 11, 0.4);
+          color: #f59e0b;
+        }
+
+        .fm-style-title-main {
+          font-size: clamp(2rem, 3.2vw, 2.5rem);
+          font-weight: 800;
+          letter-spacing: -0.03em;
+          margin-bottom: 0.75rem;
+        }
+
+        .fm-style-rule-text {
+          font-size: 0.9375rem;
+          line-height: 1.6;
+          color: var(--text-secondary);
+        }
+
+        .fm-project-warning {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          padding: 1rem 1.25rem;
+          border-radius: 12px;
+          background: rgba(245, 158, 11, 0.12);
+          border: 1px solid rgba(245, 158, 11, 0.35);
+          color: #fef3c7;
+          font-size: 0.875rem;
+          margin-bottom: 2rem;
+        }
+
+        .fm-styles-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1.5rem;
+          margin-bottom: 2.5rem;
+        }
+
+        @media (max-width: 900px) {
+          .fm-styles-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .fm-style-card-choice {
+          padding: 1.75rem;
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1.5px solid rgba(255, 255, 255, 0.18);
+          cursor: pointer;
+          outline: none;
+          transition: all 0.25s ease;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .fm-style-card-choice:hover {
+          background: rgba(255, 255, 255, 0.14);
+          border-color: rgba(0, 217, 255, 0.4);
+          transform: translateY(-2px);
+        }
+
+        .fm-style-card-choice.is-selected {
+          background: rgba(7, 83, 191, 0.55);
+          border-color: #00d9ff;
+          box-shadow: 0 0 25px rgba(0, 217, 255, 0.35);
+          transform: translateY(-3px);
+        }
+
+        .fm-style-card-choice:focus-visible {
+          outline: 2px solid #00d9ff;
+          outline-offset: 3px;
+        }
+
+        .choice-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          margin-bottom: 1rem;
+        }
+
+        .choice-title-group {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .choice-icon-wrap {
+          width: 40px;
+          height: 40px;
+          border-radius: 10px;
+          background: rgba(0, 217, 255, 0.15);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .choice-name {
+          font-size: 1.25rem;
+          font-weight: 700;
+          color: #ffffff;
+        }
+
+        .choice-subtitle {
+          font-size: 0.75rem;
+          color: #00d9ff;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+        }
+
+        .choice-radio {
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          border: 2px solid rgba(255, 255, 255, 0.35);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: border-color 0.2s ease;
+        }
+
+        .choice-radio.is-checked {
+          border-color: #00d9ff;
+        }
+
+        .choice-radio-inner {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #00d9ff;
+          box-shadow: 0 0 8px #00d9ff;
+        }
+
+        .choice-companies {
+          font-size: 0.8125rem;
+          color: rgba(255, 255, 255, 0.75);
+          margin-bottom: 1rem;
+          line-height: 1.4;
+        }
+
+        .choice-desc {
+          font-size: 0.875rem;
+          line-height: 1.55;
+          color: rgba(255, 255, 255, 0.88);
+          margin-bottom: 1.25rem;
+          flex: 1;
+        }
+
+        .choice-probing-points {
+          border-top: 1px solid rgba(255, 255, 255, 0.1);
+          padding-top: 1rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        .probing-label {
+          font-size: 0.6875rem;
+          text-transform: uppercase;
+          font-weight: 700;
+          color: rgba(255, 255, 255, 0.5);
+          letter-spacing: 0.05em;
+          margin-bottom: 0.25rem;
+        }
+
+        .probing-item {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.8125rem;
+          color: rgba(255, 255, 255, 0.8);
+        }
+
+        .fm-rule-callout {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.75rem;
+          text-align: center;
+          font-size: 0.875rem;
+          font-style: italic;
+          color: rgba(255, 255, 255, 0.8);
+          margin-bottom: 2rem;
+        }
+
+        .rule-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #00d9ff;
+        }
+
+        .fm-launch-error {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.75rem 1rem;
+          border-radius: 10px;
+          background: rgba(239, 68, 68, 0.15);
+          border: 1px solid rgba(239, 68, 68, 0.4);
+          color: #fca5a5;
+          font-size: 0.875rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .fm-launch-action {
+          display: flex;
+          justify-content: center;
+        }
+
+        .fm-start-btn {
+          min-width: 320px;
+          padding: 1rem 2rem;
+          font-size: 1rem;
+        }
+
+        :global(.spin-icon) {
+          animation: spin 1s linear infinite;
+        }
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
       `}</style>
-    </main>
+    </PageShell>
   );
 }

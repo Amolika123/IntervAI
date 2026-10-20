@@ -192,13 +192,19 @@ def generate_deterministic_question_bank(
 
     bank: List[Dict[str, Any]] = []
 
-    p1 = projects[0] if len(projects) > 0 else None
-    p2 = projects[1] if len(projects) > 1 else None
-    p3 = projects[2] if len(projects) > 2 else None
+    valid_projects = [
+        p for p in projects
+        if p.get("name") and not any(ph in p.get("name", "").lower() for ph in ("primary technical project", "unknown project", "general experience"))
+    ]
+    effective_projects = valid_projects if valid_projects else projects
 
-    p1_name = p1.get("name", "your primary project") if p1 else "your software project"
-    p2_name = p2.get("name", "your second project") if p2 else None
-    p3_name = p3.get("name", "your third project") if p3 else None
+    p1 = effective_projects[0] if len(effective_projects) > 0 else None
+    p2 = effective_projects[1] if len(effective_projects) > 1 else None
+    p3 = effective_projects[2] if len(effective_projects) > 2 else None
+
+    p1_name = p1.get("name") if p1 and p1.get("name") else "your core project"
+    p2_name = p2.get("name") if p2 and p2.get("name") else None
+    p3_name = p3.get("name") if p3 and p3.get("name") else None
 
     # Question 1: Personalized Technical Opening Question (No generic greeting)
     if style_id == "FAANG":

@@ -8,6 +8,7 @@ class CompiledProjectContext(BaseModel):
     id: Optional[str] = None
     name: str
     resumeDescription: str
+    technologies: List[str] = Field(default_factory=list)
     githubUrl: Optional[str] = None
     githubOwner: Optional[str] = None
     githubRepo: Optional[str] = None
@@ -45,6 +46,7 @@ async def build_candidate_context(profile: CandidateProfile) -> CandidateContext
             processed_projects.append(CompiledProjectContext(
                 name=proj.name,
                 resumeDescription=proj.description,
+                technologies=proj.technologies or [],
                 githubUrl=gh_details.githubUrl,
                 githubOwner=gh_details.owner,
                 githubRepo=gh_details.repo,
@@ -58,6 +60,7 @@ async def build_candidate_context(profile: CandidateProfile) -> CandidateContext
             processed_projects.append(CompiledProjectContext(
                 name=proj.name,
                 resumeDescription=proj.description,
+                technologies=proj.technologies or [],
                 githubUrl=proj.url,
                 repositoryAccessible=False,
                 readmeAvailable=False,
