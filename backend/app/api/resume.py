@@ -125,3 +125,46 @@ async def upload_resume(
         db.rollback()
         logger.error(f"Resume upload endpoint error: {error}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(error))
+
+
+@router.get("/{resume_id}")
+async def get_resume_by_id(
+    resume_id: str,
+    db: Session = Depends(get_db)
+):
+    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    parsed_profile = json.loads(resume.parsedProfile)
+    projects_list = []
+    for p in resume.projects:
+        projects_list.append({
+            "id": p.id,
+            "name": p.name,
+            "resumeDescription": p.resumeDescription,
+            "githubUrl": p.githubUrl,
+            "githubOwner": p.githubOwner,
+            "githubRepo": p.githubRepo,
+            "repositoryAccessible": p.repositoryAccessible,
+            "readmeAvailable": p.readmeAvailable,
+            "contextSource": p.contextSource,
+        })
+
+    return {
+        "success": True,
+        "resumeId": resume.id,
+        "userId": resume.userId,
+        "parsedProfile": parsed_profile,
+        "candidateContext": {
+            "candidate": {
+                "name": parsed_profile.get("name", "Candidate"),
+                "education": parsed_profile.get("education", []),
+                "skills": parsed_profile.get("skills", []),
+                "technologies": parsed_profile.get("technologies", []),
+                "experience": parsed_profile.get("experience", []),
+            },
+            "projects": projects_list,
+        }
+    }
+

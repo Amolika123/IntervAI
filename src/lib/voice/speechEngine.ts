@@ -15,6 +15,7 @@ export interface SpeechEngineCallbacks {
   onStateChange: (state: VoiceState) => void;
   onInterimTranscript: (text: string) => void;
   onFinalTranscript: (text: string) => void;
+  onAISpeechEnd?: () => void;
   onError: (errorMsg: string) => void;
 }
 
@@ -25,6 +26,7 @@ export class SpeechEngine {
   private isListening = false;
   private silenceTimer: NodeJS.Timeout | null = null;
   private currentTranscript = '';
+  private currentInterim = '';
   private voicesLoaded = false;
   private voices: SpeechSynthesisVoice[] = [];
 
@@ -95,6 +97,7 @@ export class SpeechEngine {
         if (final) {
           this.currentTranscript += final;
         }
+        this.currentInterim = interim;
 
         const combinedText = (this.currentTranscript + ' ' + interim).trim();
         this.callbacks.onInterimTranscript(combinedText);
@@ -123,6 +126,10 @@ export class SpeechEngine {
 
       this.recognition = rec;
     }
+  }
+
+  public getCurrentTranscript(): string {
+    return (this.currentTranscript + ' ' + this.currentInterim).trim();
   }
 
   // Speak AI question aloud
@@ -159,6 +166,9 @@ export class SpeechEngine {
               hasEnded = true;
               this.callbacks.onStateChange('LISTENING');
               this.startListening();
+              if (this.callbacks.onAISpeechEnd) {
+                this.callbacks.onAISpeechEnd();
+              }
               resolve();
             };
 
@@ -187,6 +197,9 @@ export class SpeechEngine {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       this.callbacks.onStateChange('LISTENING');
       this.startListening();
+      if (this.callbacks.onAISpeechEnd) {
+        this.callbacks.onAISpeechEnd();
+      }
       onDone();
       return;
     }
@@ -209,6 +222,9 @@ export class SpeechEngine {
       if (safetyTimeout) clearTimeout(safetyTimeout);
       this.callbacks.onStateChange('LISTENING');
       this.startListening();
+      if (this.callbacks.onAISpeechEnd) {
+        this.callbacks.onAISpeechEnd();
+      }
       onDone();
     };
 
@@ -225,6 +241,7 @@ export class SpeechEngine {
   public startListening() {
     this.stopSpeaking();
     this.currentTranscript = '';
+    this.currentInterim = '';
     this.isListening = true;
     this.callbacks.onStateChange('LISTENING');
 

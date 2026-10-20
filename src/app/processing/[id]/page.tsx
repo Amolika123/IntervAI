@@ -46,11 +46,28 @@ export default function ProcessingPage({ params }: ProcessingProps) {
 
     async function runProcessing() {
       try {
+        let loadedData = null;
         const cachedStr = sessionStorage.getItem('resumeData');
         if (cachedStr) {
-          const cached = JSON.parse(cachedStr);
-          if (cached.resumeId === resumeId) {
-            setCandidateData(cached.candidateContext);
+          try {
+            const cached = JSON.parse(cachedStr);
+            if (cached.resumeId === resumeId && cached.candidateContext) {
+              loadedData = cached.candidateContext;
+              setCandidateData(loadedData);
+            }
+          } catch (e) {
+            console.warn('Error reading cached resume:', e);
+          }
+        }
+
+        if (!loadedData) {
+          const fetchRes = await fetch(`/api/resume/${resumeId}`);
+          if (fetchRes.ok) {
+            const fetchedJson = await fetchRes.json();
+            if (fetchedJson.success && fetchedJson.candidateContext) {
+              loadedData = fetchedJson.candidateContext;
+              setCandidateData(loadedData);
+            }
           }
         }
 
@@ -206,15 +223,19 @@ export default function ProcessingPage({ params }: ProcessingProps) {
                 gap: '8px',
                 padding: '6px 16px',
                 borderRadius: '30px',
-                background: 'rgba(99, 102, 241, 0.1)',
-                border: '1px solid rgba(99, 102, 241, 0.25)',
-                color: 'var(--accent-indigo)',
+                background: projectsCount > 0 ? 'rgba(99, 102, 241, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                border: projectsCount > 0 ? '1px solid rgba(99, 102, 241, 0.25)' : '1px solid rgba(239, 68, 68, 0.3)',
+                color: projectsCount > 0 ? 'var(--accent-indigo)' : '#f87171',
                 fontSize: '0.85rem',
                 fontWeight: 600,
                 marginBottom: '1rem'
               }}>
-                <ShieldCheck size={16} />
-                <span>Resume Grounded Dossier Ready ({projectsCount} Projects Loaded)</span>
+                {projectsCount > 0 ? <ShieldCheck size={16} /> : <AlertCircle size={16} />}
+                <span>
+                  {projectsCount > 0
+                    ? `Resume Grounded Dossier Ready (${projectsCount} Projects Loaded)`
+                    : 'No Technical Projects Identified'}
+                </span>
               </div>
 
               <h1 style={{ fontSize: '2.2rem', fontWeight: 800, letterSpacing: '-0.5px', marginBottom: '0.5rem' }}>
@@ -224,6 +245,28 @@ export default function ProcessingPage({ params }: ProcessingProps) {
                 Your resume claims dictate <strong>WHAT</strong> is asked. The selected company preset determines <strong>HOW</strong> deeply the AI interviewer probes your architecture, trade-offs, and implementation.
               </p>
             </div>
+
+            {/* Warning when project extraction failed / yielded 0 projects */}
+            {projectsCount === 0 && (
+              <div style={{
+                marginBottom: '2rem',
+                padding: '16px 20px',
+                borderRadius: '12px',
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#fca5a5',
+                fontSize: '0.95rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                lineHeight: 1.5
+              }}>
+                <AlertCircle size={24} style={{ flexShrink: 0, color: '#f87171' }} />
+                <div>
+                  <strong>Project extraction failed or no projects found:</strong> IntervAI conducts technical voice interviews strictly grounded in candidate project implementation. Please upload a resume with clearly listed projects and descriptions to start an interview.
+                </div>
+              </div>
+            )}
 
             {/* Configurable Style Cards Grid */}
             <div style={{
@@ -395,24 +438,35 @@ export default function ProcessingPage({ params }: ProcessingProps) {
                 </span>
               </div>
 
-              <button
-                onClick={handleStartInterview}
-                disabled={isStarting}
-                className="btn-primary"
-                style={{ padding: '14px 32px', fontSize: '1rem' }}
-              >
-                {isStarting ? (
-                  <>
-                    <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
-                    <span>Configuring Interviewer...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Start Technical Interview</span>
-                    <ArrowRight size={18} />
-                  </>
-                )}
-              </button>
+              {projectsCount === 0 ? (
+                <button
+                  onClick={() => router.push('/')}
+                  className="btn-secondary"
+                  style={{ padding: '14px 28px', fontSize: '1rem', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#fca5a5' }}
+                >
+                  <span>Upload a Resume with Projects</span>
+                  <ArrowRight size={18} />
+                </button>
+              ) : (
+                <button
+                  onClick={handleStartInterview}
+                  disabled={isStarting}
+                  className="btn-primary"
+                  style={{ padding: '14px 32px', fontSize: '1rem' }}
+                >
+                  {isStarting ? (
+                    <>
+                      <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+                      <span>Configuring Interviewer...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Start Technical Interview</span>
+                      <ArrowRight size={18} />
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
           </div>

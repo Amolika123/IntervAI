@@ -33,7 +33,8 @@ class InterviewAnswerRequest(BaseModel):
     order: Optional[int] = 1
     questionText: str
     groundingSource: Optional[str] = "resume:general"
-    transcript: str
+    transcript: Optional[str] = ""
+    status: Optional[str] = "answered"
     projectId: Optional[str] = None
 
 

@@ -139,6 +139,34 @@ class Interview(Base):
     questions = relationship("InterviewQuestion", back_populates="interview", cascade="all, delete-orphan", order_by="InterviewQuestion.order")
     answers = relationship("InterviewAnswer", back_populates="interview", cascade="all, delete-orphan")
     evaluation = relationship("Evaluation", back_populates="interview", uselist=False, cascade="all, delete-orphan")
+    plannedQuestions = relationship(
+        "InterviewPlannedQuestion",
+        back_populates="interview",
+        cascade="all, delete-orphan",
+        order_by="InterviewPlannedQuestion.order"
+    )
+
+
+class InterviewPlannedQuestion(Base):
+    """
+    Temporary question bank model for an active interview session.
+    Deleted after interview evaluation and results are successfully finalized.
+    """
+    __tablename__ = "InterviewPlannedQuestion"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    interviewId = Column(String, ForeignKey("Interview.id", ondelete="CASCADE"), nullable=False)
+    projectId = Column(String, ForeignKey("Project.id", ondelete="SET NULL"), nullable=True)
+    order = Column(Integer, nullable=False)
+    questionText = Column(Text, nullable=False)
+    category = Column(String, default="general", nullable=False)
+    groundingSource = Column(String, nullable=False)
+    isAsked = Column(Boolean, default=False, nullable=False)
+    createdAt = Column(PrismaDateTime, default=datetime.utcnow, nullable=False)
+
+    interview = relationship("Interview", back_populates="plannedQuestions")
+    project = relationship("Project")
+
 
 
 class InterviewQuestion(Base):

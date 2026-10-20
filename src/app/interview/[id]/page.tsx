@@ -15,15 +15,27 @@ import {
   VolumeX,
   RefreshCw,
   AlertCircle,
+  AlertTriangle,
   Play,
   ChevronDown,
   ChevronUp,
   Code2,
   Zap,
-  Building2
+  Building2,
+  Timer
 } from 'lucide-react';
 import { SpeechEngine, VoiceState } from '@/lib/voice/speechEngine';
 import { INTERVIEW_STYLES, InterviewStyleId } from '@/lib/interviewer/styles';
+import {
+  TOTAL_INTERVIEW_DURATION_SECONDS,
+  TOTAL_WARNING_5MIN_SECONDS,
+  TOTAL_WARNING_1MIN_SECONDS,
+  TOTAL_WARNING_10SEC_SECONDS,
+  PER_QUESTION_DURATION_SECONDS,
+  QUESTION_WARNING_15SEC_SECONDS,
+  QUESTION_WARNING_5SEC_SECONDS,
+  AnswerStatus
+} from '@/lib/interviewer/interviewConfig';
 
 interface LiveInterviewProps {
   params: Promise<{ id: string }>;
@@ -33,6 +45,7 @@ interface TranscriptTurn {
   order: number;
   speaker: 'AI' | 'Candidate';
   text: string;
+  status?: AnswerStatus;
   groundingSource?: string;
 }
 
@@ -49,11 +62,15 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
   const [sessionStarted, setSessionStarted] = useState<boolean>(false);
   const [micGranted, setMicGranted] = useState<boolean | null>(null);
   const [interimSpeechText, setInterimSpeechText] = useState<string>('');
-  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [isEnding, setIsEnding] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showAccessibilityText, setShowAccessibilityText] = useState<boolean>(false);
   const [manualText, setManualText] = useState<string>('');
+
+  // Timers State
+  const [totalRemainingSeconds, setTotalRemainingSeconds] = useState<number>(TOTAL_INTERVIEW_DURATION_SECONDS);
+  const [questionRemainingSeconds, setQuestionRemainingSeconds] = useState<number>(PER_QUESTION_DURATION_SECONDS);
+  const [isQuestionTimerActive, setIsQuestionTimerActive] = useState<boolean>(false);
 
   // Transcript & Grounding State
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
@@ -61,9 +78,70 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
   const [activeGroundingSource, setActiveGroundingSource] = useState<string>('resume:project_1');
   const [openingQuestionText, setOpeningQuestionText] = useState<string>('');
 
-  // Engine References
+  // Engine & Timing References
   const speechEngineRef = useRef<SpeechEngine | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const totalTimerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const totalDeadlineRef = useRef<number | null>(null);
+
+  const questionTimerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const questionDeadlineRef = useRef<number | null>(null);
+
+  const isSubmittingRef = useRef<boolean>(false);
+  const isEndingRef = useRef<boolean>(false);
+  const currentQuestionOrderRef = useRef<number>(1);
+  const activeGroundingSourceRef = useRef<string>('resume:project_1');
+  const lastQuestionTextRef = useRef<string>('');
+
+  // Synchronize state to refs
+  useEffect(() => {
+    currentQuestionOrderRef.current = currentQuestionOrder;
+  }, [currentQuestionOrder]);
+
+  useEffect(() => {
+    activeGroundingSourceRef.current = activeGroundingSource;
+  }, [activeGroundingSource]);
+
+  // Clean up all timers and intervals
+  const clearAllTimers = () => {
+    if (totalTimerIntervalRef.current) {
+      clearInterval(totalTimerIntervalRef.current);
+      totalTimerIntervalRef.current = null;
+    }
+    if (questionTimerIntervalRef.current) {
+      clearInterval(questionTimerIntervalRef.current);
+      questionTimerIntervalRef.current = null;
+    }
+  };
+
+  const stopQuestionTimer = () => {
+    questionDeadlineRef.current = null;
+    setIsQuestionTimerActive(false);
+    if (questionTimerIntervalRef.current) {
+      clearInterval(questionTimerIntervalRef.current);
+      questionTimerIntervalRef.current = null;
+    }
+  };
+
+  const startQuestionTimer = () => {
+    if (isEndingRef.current) return;
+    stopQuestionTimer();
+
+    questionDeadlineRef.current = Date.now() + PER_QUESTION_DURATION_SECONDS * 1000;
+    setQuestionRemainingSeconds(PER_QUESTION_DURATION_SECONDS);
+    setIsQuestionTimerActive(true);
+
+    questionTimerIntervalRef.current = setInterval(() => {
+      if (!questionDeadlineRef.current || isEndingRef.current) return;
+      const remainingMs = questionDeadlineRef.current - Date.now();
+      const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
+      setQuestionRemainingSeconds(remainingSec);
+
+      if (remainingSec <= 0) {
+        stopQuestionTimer();
+        handleQuestionTimeout();
+      }
+    }, 500);
+  };
 
   // Initialize Session Data
   useEffect(() => {
@@ -78,7 +156,13 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
       },
       onFinalTranscript: (finalText) => {
         if (isMounted && finalText.trim().length > 0) {
-          handleCandidateFinalAnswer(finalText.trim());
+          handleCandidateFinalAnswer(finalText.trim(), 'answered');
+        }
+      },
+      onAISpeechEnd: () => {
+        // Start per-question timer ONLY after AI finishes speaking aloud
+        if (isMounted && !isEndingRef.current) {
+          startQuestionTimer();
         }
       },
       onError: (msg) => {
@@ -121,33 +205,28 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
           setProjects(pList);
           const firstProj = pList[0];
           if (firstProj) {
-            setActiveGroundingSource(`project:${firstProj.name}:${firstProj.contextSource}`);
+            const src = `project:${firstProj.name}:${firstProj.contextSource}`;
+            setActiveGroundingSource(src);
+            activeGroundingSourceRef.current = src;
           }
         }
 
         const p1 = pList[0];
-        let openingQ = '';
+        const openingQ = sessionData.openingQuestion || (
+          resolvedStyle === 'FAANG'
+            ? (p1 ? `Hello ${name}. Let's dive into ${p1.name}. Can you walk me through the core implementation details and the primary data structures you used?` : `Hello ${name}. Can you walk me through the primary technical project on your resume?`)
+            : resolvedStyle === 'MANGOS'
+            ? (p1 ? `Hello ${name}. Let's discuss ${p1.name}. Can you walk me through the high-level architecture and the fundamental design trade-offs you made?` : `Hello ${name}. Can you walk me through your primary technical project on your resume?`)
+            : (p1 ? `Hello ${name}. Let's examine ${p1.name}. Can you walk me through its practical implementation, focusing on your APIs, databases, and application architecture?` : `Hello ${name}. Can you walk me through your primary technical project?`)
+        );
 
-        if (resolvedStyle === 'FAANG') {
-          openingQ = p1
-            ? `Hello ${name}. Let's dive into ${p1.name}. Can you walk me through the core implementation details and the primary data structures you used?`
-            : `Hello ${name}. Can you walk me through the primary technical project on your resume, focusing on your implementation choices and data structures?`;
-        } else if (resolvedStyle === 'MANGOS') {
-          openingQ = p1
-            ? `Hello ${name}. Let's discuss ${p1.name}. Can you walk me through the high-level architecture and the fundamental design trade-offs you made?`
-            : `Hello ${name}. Can you walk me through your primary technical project on your resume and the architectural decisions behind it?`;
-        } else {
-          // BIG_4
-          openingQ = p1
-            ? `Hello ${name}. Let's examine ${p1.name}. Can you walk me through its practical implementation, focusing on your APIs, databases, and application architecture?`
-            : `Hello ${name}. Can you walk me through your primary technical project, focusing on your practical engineering decisions and database/API design?`;
-        }
-
-        const openingSrc = p1 ? `project:${p1.name}:${p1.contextSource}` : 'resume:project_overview';
+        const openingSrc = sessionData.openingSource || (p1 ? `project:${p1.name}:${p1.contextSource}` : 'resume:project_overview');
 
         if (isMounted) {
           setOpeningQuestionText(openingQ);
+          lastQuestionTextRef.current = openingQ;
           setActiveGroundingSource(openingSrc);
+          activeGroundingSourceRef.current = openingSrc;
           setTranscript([
             { order: 1, speaker: 'AI', text: openingQ, groundingSource: openingSrc }
           ]);
@@ -165,12 +244,12 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
 
     return () => {
       isMounted = false;
-      if (timerRef.current) clearInterval(timerRef.current);
+      clearAllTimers();
       if (speechEngineRef.current) speechEngineRef.current.destroy();
     };
   }, [interviewId]);
 
-  // User Gesture Click Handler: Unlocks Audio Context & Starts Spoken AI Voice
+  // Start Voice Session Handler: Unlocks Audio Context, Starts Total Countdown, Speaks Opening Q
   const handleStartVoiceSession = async () => {
     if (!speechEngineRef.current) return;
 
@@ -186,132 +265,197 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
       setMicGranted(false);
     }
 
-    timerRef.current = setInterval(() => {
-      setElapsedSeconds((prev) => prev + 1);
-    }, 1000);
+    // Start Total Interview Countdown (40 minutes)
+    totalDeadlineRef.current = Date.now() + TOTAL_INTERVIEW_DURATION_SECONDS * 1000;
+    setTotalRemainingSeconds(TOTAL_INTERVIEW_DURATION_SECONDS);
 
+    totalTimerIntervalRef.current = setInterval(() => {
+      if (!totalDeadlineRef.current || isEndingRef.current) return;
+      const remainingMs = totalDeadlineRef.current - Date.now();
+      const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
+      setTotalRemainingSeconds(remainingSec);
+
+      if (remainingSec <= 0) {
+        handleTotalInterviewTimeout();
+      }
+    }, 500);
+
+    // AI Speaks opening question aloud (Question timer begins on onAISpeechEnd)
     await speechEngineRef.current.speakAIQuestion(openingQuestionText);
   };
 
-  // Candidate Final Answer Handler (VAD auto-submit or manual click)
-  const handleCandidateFinalAnswer = async (answerText: string) => {
-    if (!answerText.trim()) return;
+  // Handler for Question Timer Expiration (90s limit)
+  const handleQuestionTimeout = () => {
+    if (isEndingRef.current || isSubmittingRef.current) return;
 
+    // Check if candidate had any partial spoken words
+    const spoken = speechEngineRef.current?.getCurrentTranscript() || '';
+    if (spoken.trim().length > 0) {
+      handleCandidateFinalAnswer(spoken.trim(), 'timed_out');
+    } else {
+      handleCandidateFinalAnswer('', 'timed_out');
+    }
+  };
+
+  // Handler for Total Interview Timer Expiration (40 mins limit)
+  const handleTotalInterviewTimeout = async () => {
+    if (isEndingRef.current) return;
+    isEndingRef.current = true;
+    clearAllTimers();
+
+    // Check if candidate was speaking when total time expired
+    const inProgress = speechEngineRef.current?.getCurrentTranscript() || '';
+    if (inProgress.trim().length > 0 && !isSubmittingRef.current) {
+      try {
+        await fetch('/api/interview/answer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            interviewId,
+            order: currentQuestionOrderRef.current,
+            questionText: lastQuestionTextRef.current || 'Technical interview question',
+            groundingSource: activeGroundingSourceRef.current,
+            transcript: inProgress.trim(),
+            status: 'answered'
+          })
+        });
+      } catch (e) {
+        console.warn('Final in-progress turn save notice:', e);
+      }
+    }
+
+    await handleEndInterview();
+  };
+
+  // Candidate Final Answer Handler (VAD auto-submit, timeout, or manual button click)
+  const handleCandidateFinalAnswer = async (answerText: string, status: AnswerStatus = 'answered') => {
+    if (isSubmittingRef.current || isEndingRef.current) return;
+    isSubmittingRef.current = true;
+
+    stopQuestionTimer();
     setVoiceState('PROCESSING_ANSWER');
     setInterimSpeechText('');
 
-    const lastAiTurn = [...transcript].reverse().find((t) => t.speaker === 'AI');
-    const questionText = lastAiTurn ? lastAiTurn.text : 'Grounded project question';
+    const questionText = lastQuestionTextRef.current || 'Technical question';
+    const currentOrder = currentQuestionOrderRef.current;
+    const finalAnswerDisplay = answerText.trim() || (status === 'timed_out' ? '[Time expired without answer]' : '[Unanswered]');
 
-    const currentOrder = currentQuestionOrder;
     setTranscript((prev) => [
       ...prev,
-      { order: currentOrder, speaker: 'Candidate', text: answerText }
+      { order: currentOrder, speaker: 'Candidate', text: finalAnswerDisplay, status }
     ]);
 
-    // Save turn asynchronously to backend DB
+    // Save turn to backend DB and receive next non-repetitive grounded question from question bank
+    let backendNextQ = '';
+    let backendNextSource = activeGroundingSourceRef.current;
+    let backendNextOrder = currentOrder + 1;
+
     try {
-      await fetch('/api/interview/answer', {
+      const res = await fetch('/api/interview/answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           interviewId,
           order: currentOrder,
           questionText,
-          groundingSource: activeGroundingSource,
-          transcript: answerText
+          groundingSource: activeGroundingSourceRef.current,
+          transcript: answerText.trim(),
+          status
         })
       });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.nextQuestion) backendNextQ = data.nextQuestion;
+        if (data.nextGroundingSource) backendNextSource = data.nextGroundingSource;
+        if (data.nextOrder) backendNextOrder = data.nextOrder;
+      }
     } catch (e) {
-      console.error('Failed to persist turn:', e);
+      console.error('Failed to persist turn or retrieve next question:', e);
     }
 
-    const nextOrder = currentOrder + 1;
-    setCurrentQuestionOrder(nextOrder);
+    // Check if total interview expired while processing answer
+    if (isEndingRef.current || totalRemainingSeconds <= 0) {
+      isSubmittingRef.current = false;
+      await handleEndInterview();
+      return;
+    }
+
+    setCurrentQuestionOrder(backendNextOrder);
     setVoiceState('GENERATING_NEXT_QUESTION');
 
     // Dynamic Style-Grounded Follow-up logic
     setTimeout(async () => {
-      let nextQ = '';
-      let nextSource = activeGroundingSource;
+      if (isEndingRef.current) {
+        isSubmittingRef.current = false;
+        return;
+      }
 
-      const p1 = projects[0];
-      const p2 = projects[1];
+      let nextQ = backendNextQ;
+      let nextSource = backendNextSource;
 
-      if (interviewStyle === 'FAANG') {
-        if (nextOrder === 2 && p1) {
-          nextQ = `In ${p1.name}, what were the main computational or memory bottlenecks, and how did you analyze the algorithmic complexity (time and space)?`;
-          nextSource = `project:${p1.name}:algorithms_complexity`;
-        } else if (nextOrder === 3 && p1) {
-          nextQ = `What edge cases, boundary inputs, or malformed data did you account for in ${p1.name}, and how did your implementation handle unexpected inputs?`;
-          nextSource = `project:${p1.name}:edge_cases_and_boundaries`;
-        } else if (nextOrder === 4 && p2) {
-          nextQ = `Moving to another project on your resume, ${p2.name}. Walk me through how you structured its data flow and optimized its runtime performance.`;
-          nextSource = `project:${p2.name}:performance_optimization`;
+      // Fallback only if backend did not return nextQuestion
+      if (!nextQ) {
+        const p1 = projects[0];
+        if (interviewStyle === 'FAANG') {
+          nextQ = p1
+            ? `In ${p1.name}, what were the main computational bottlenecks and how did you analyze algorithmic complexity?`
+            : `Can you walk me through the algorithmic trade-offs of the systems you implemented?`;
+          nextSource = p1 ? `project:${p1.name}:complexity` : 'resume:skills:complexity';
+        } else if (interviewStyle === 'MANGOS') {
+          nextQ = p1
+            ? `What alternative system architectures did you consider for ${p1.name}, and why select this stack?`
+            : `Can you walk me through the system design trade-offs and failure scenarios of the architectures you built?`;
+          nextSource = p1 ? `project:${p1.name}:architecture` : 'resume:skills:architecture';
         } else {
-          nextQ = `How would you evaluate and optimize the algorithmic efficiency and resource utilization across the systems you built?`;
-          nextSource = `resume:skills:computational_efficiency`;
-        }
-      } else if (interviewStyle === 'MANGOS') {
-        if (nextOrder === 2 && p1) {
-          nextQ = `Why did you choose this specific system architecture and model/component stack for ${p1.name} over other viable architectural alternatives?`;
-          nextSource = `project:${p1.name}:architecture_tradeoffs`;
-        } else if (nextOrder === 3 && p1) {
-          nextQ = `In a production failure scenario—such as an upstream dependency timeout, rate limit, or corrupted data—how does ${p1.name} respond, and how would you evaluate its robustness?`;
-          nextSource = `project:${p1.name}:failure_scenarios_and_fault_tolerance`;
-        } else if (nextOrder === 4 && p2) {
-          nextQ = `Looking at another project on your resume, ${p2.name}. What were the primary architectural trade-offs, and how does it scale under heavy distributed load?`;
-          nextSource = `project:${p2.name}:distributed_scalability`;
-        } else {
-          nextQ = `How would you evaluate and optimize the system scalability, memory constraints, or latency trade-offs of the architectures you built?`;
-          nextSource = `resume:skills:system_tradeoffs`;
-        }
-      } else {
-        // BIG_4
-        if (nextOrder === 2 && p1) {
-          nextQ = `How did you design the database schemas, query indexing, and API contracts in ${p1.name} to ensure data consistency and reliability?`;
-          nextSource = `project:${p1.name}:database_and_apis`;
-        } else if (nextOrder === 3 && p1) {
-          nextQ = `When debugging complex issues or synchronization errors in ${p1.name}, what logging, monitoring, and troubleshooting strategies did you use?`;
-          nextSource = `project:${p1.name}:debugging_and_observability`;
-        } else if (nextOrder === 4 && p2) {
-          nextQ = `Moving to another project on your resume, ${p2.name}. Can you explain its practical architecture, API endpoints, and database interactions?`;
-          nextSource = `project:${p2.name}:practical_engineering`;
-        } else {
-          nextQ = `How would you address real-world enterprise constraints—such as security standards, auditability, and maintaining high uptime SLAs—in these systems?`;
-          nextSource = `resume:skills:enterprise_constraints`;
+          nextQ = p1
+            ? `How did you design the database schemas, indexing, and APIs in ${p1.name} to ensure reliability?`
+            : `How did you structure database schemas and API contracts across your technical projects?`;
+          nextSource = p1 ? `project:${p1.name}:databases` : 'resume:skills:databases';
         }
       }
 
+      lastQuestionTextRef.current = nextQ;
       setActiveGroundingSource(nextSource);
+      activeGroundingSourceRef.current = nextSource;
 
       setTranscript((prev) => [
         ...prev,
-        { order: nextOrder, speaker: 'AI', text: nextQ, groundingSource: nextSource }
+        { order: backendNextOrder, speaker: 'AI', text: nextQ, groundingSource: nextSource }
       ]);
 
-      if (speechEngineRef.current) {
+      isSubmittingRef.current = false;
+
+      if (speechEngineRef.current && !isEndingRef.current) {
         await speechEngineRef.current.speakAIQuestion(nextQ);
       }
-    }, 800);
+    }, 700);
   };
 
   const handleInterruptAI = () => {
     if (speechEngineRef.current) {
       speechEngineRef.current.stopSpeaking();
       speechEngineRef.current.startListening();
+      // Start question timer immediately upon interruption
+      startQuestionTimer();
     }
   };
 
   const handleManualStartListening = () => {
     if (speechEngineRef.current) {
       speechEngineRef.current.startListening();
+      if (!isQuestionTimerActive) {
+        startQuestionTimer();
+      }
     }
   };
 
   const handleEndInterview = async () => {
+    if (isEnding) return;
     setIsEnding(true);
+    isEndingRef.current = true;
+    clearAllTimers();
     setVoiceState('INTERVIEW_ENDED');
+
     if (speechEngineRef.current) {
       speechEngineRef.current.destroy();
     }
@@ -329,7 +473,7 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
     }
   };
 
-  const formatTimer = (totalSeconds: number) => {
+  const formatCountdown = (totalSeconds: number) => {
     const mins = Math.floor(totalSeconds / 60);
     const secs = totalSeconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
@@ -344,9 +488,11 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
       case 'LISTENING':
         return { label: 'Listening to you... Speak your answer into microphone', color: '#22c55e', icon: <Mic size={20} /> };
       case 'PROCESSING_ANSWER':
-        return { label: 'Analyzing candidate answer...', color: 'var(--accent-purple)', icon: <RefreshCw size={20} className="spin" /> };
+        return { label: 'Analyzing candidate answer against rubric...', color: 'var(--accent-purple)', icon: <RefreshCw size={20} className="spin" /> };
       case 'GENERATING_NEXT_QUESTION':
         return { label: `Formulating ${currentStyleConfig.name} follow-up question...`, color: 'var(--accent-indigo)', icon: <Sparkles size={20} /> };
+      case 'INTERVIEW_ENDED':
+        return { label: 'Interview concluding. Finalizing evaluation...', color: 'var(--accent-cyan)', icon: <RefreshCw size={20} className="spin" /> };
       case 'ERROR':
         return { label: errorMessage || 'Microphone error', color: '#f87171', icon: <AlertCircle size={20} /> };
       default:
@@ -356,8 +502,17 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
 
   const stateBanner = renderVoiceStateBanner();
 
+  // Total Timer Warning Thresholds
+  const isTotalWarning10Sec = totalRemainingSeconds <= TOTAL_WARNING_10SEC_SECONDS && totalRemainingSeconds > 0;
+  const isTotalWarning1Min = totalRemainingSeconds <= TOTAL_WARNING_1MIN_SECONDS && !isTotalWarning10Sec;
+  const isTotalWarning5Min = totalRemainingSeconds <= TOTAL_WARNING_5MIN_SECONDS && !isTotalWarning1Min && !isTotalWarning10Sec;
+
+  // Question Timer Warning Thresholds
+  const isQuestionWarning5Sec = questionRemainingSeconds <= QUESTION_WARNING_5SEC_SECONDS && isQuestionTimerActive;
+  const isQuestionWarning15Sec = questionRemainingSeconds <= QUESTION_WARNING_15SEC_SECONDS && !isQuestionWarning5Sec && isQuestionTimerActive;
+
   return (
-    <main style={{ minHeight: '100vh', padding: '2rem 1.5rem', maxWidth: '1100px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+    <main style={{ minHeight: '100vh', padding: '2rem 1.5rem', maxWidth: '1100px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
       
       {/* Navigation Header */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
@@ -391,12 +546,81 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
             {interviewStyle === 'BIG_4' && <Building2 size={13} />}
             <span>{currentStyleConfig.name} Style</span>
           </div>
+
+          {/* Question Counter Pill */}
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'rgba(255, 255, 255, 0.05)',
+            border: '1px solid var(--border-color)',
+            padding: '3px 10px',
+            borderRadius: '12px',
+            fontSize: '0.8rem',
+            fontWeight: 600,
+            color: 'var(--text-secondary)'
+          }}>
+            <span>Question #{currentQuestionOrder}</span>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255, 255, 255, 0.05)', padding: '6px 14px', borderRadius: '20px', fontSize: '0.9rem' }}>
-            <Clock size={16} color="var(--accent-indigo)" />
-            <span style={{ fontWeight: 600, fontFamily: 'monospace' }}>{formatTimer(elapsedSeconds)}</span>
+        {/* Header Right: Total Countdown & End Interview Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          
+          {/* Total Countdown Timer Component */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: isTotalWarning10Sec
+              ? 'rgba(239, 68, 68, 0.2)'
+              : isTotalWarning1Min
+              ? 'rgba(245, 158, 11, 0.2)'
+              : isTotalWarning5Min
+              ? 'rgba(245, 158, 11, 0.1)'
+              : 'rgba(255, 255, 255, 0.05)',
+            border: isTotalWarning10Sec
+              ? '1px solid rgba(239, 68, 68, 0.6)'
+              : isTotalWarning1Min
+              ? '1px solid rgba(245, 158, 11, 0.5)'
+              : isTotalWarning5Min
+              ? '1px solid rgba(245, 158, 11, 0.35)'
+              : '1px solid var(--border-color)',
+            padding: '6px 14px',
+            borderRadius: '20px',
+            fontSize: '0.9rem',
+            transition: 'all 0.3s ease',
+            boxShadow: isTotalWarning10Sec ? '0 0 15px rgba(239, 68, 68, 0.4)' : 'none'
+          }}>
+            <Clock size={16} color={isTotalWarning10Sec ? '#ef4444' : (isTotalWarning1Min || isTotalWarning5Min) ? '#f59e0b' : 'var(--accent-indigo)'} />
+            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
+              <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>Total Remaining</span>
+              <span style={{
+                fontWeight: 700,
+                fontFamily: 'monospace',
+                fontSize: '1rem',
+                color: isTotalWarning10Sec ? '#ef4444' : (isTotalWarning1Min || isTotalWarning5Min) ? '#f59e0b' : 'var(--text-primary)'
+              }}>
+                {formatCountdown(totalRemainingSeconds)}
+              </span>
+            </div>
+
+            {/* Warning Badges */}
+            {isTotalWarning10Sec && (
+              <span style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 800, textTransform: 'uppercase', animation: 'spin 1s' }}>
+                Ending Soon!
+              </span>
+            )}
+            {isTotalWarning1Min && (
+              <span style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>
+                1m left
+              </span>
+            )}
+            {isTotalWarning5Min && (
+              <span style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>
+                5m left
+              </span>
+            )}
           </div>
 
           <button onClick={handleEndInterview} disabled={isEnding} className="btn-danger">
@@ -435,7 +659,9 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
                   Ready to Start {currentStyleConfig.name} Voice Interview
                 </h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '520px', margin: '0 auto 1.5rem auto' }}>
-                  Preset: <strong>{currentStyleConfig.name}</strong> ({currentStyleConfig.companies.join(', ')}). Click below to authorize audio playback and microphone input.
+                  Preset: <strong>{currentStyleConfig.name}</strong> ({currentStyleConfig.companies.join(', ')}). 
+                  Total duration: <strong>{Math.floor(TOTAL_INTERVIEW_DURATION_SECONDS / 60)} minutes</strong> ({PER_QUESTION_DURATION_SECONDS} seconds per question).
+                  Click below to authorize audio playback and start the countdown.
                 </p>
                 <button onClick={handleStartVoiceSession} className="btn-primary" style={{ padding: '16px 36px', fontSize: '1.1rem' }}>
                   <Play size={20} />
@@ -444,6 +670,53 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
               </div>
             ) : (
               <>
+                {/* Per-Question Answer Countdown Pill */}
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '6px 16px',
+                  borderRadius: '20px',
+                  background: isQuestionWarning5Sec
+                    ? 'rgba(239, 68, 68, 0.25)'
+                    : isQuestionWarning15Sec
+                    ? 'rgba(245, 158, 11, 0.2)'
+                    : isQuestionTimerActive
+                    ? 'rgba(99, 102, 241, 0.12)'
+                    : 'rgba(255, 255, 255, 0.05)',
+                  border: isQuestionWarning5Sec
+                    ? '1.5px solid rgba(239, 68, 68, 0.7)'
+                    : isQuestionWarning15Sec
+                    ? '1px solid rgba(245, 158, 11, 0.6)'
+                    : '1px solid var(--border-color)',
+                  marginBottom: '1.25rem',
+                  transition: 'all 0.3s ease',
+                  boxShadow: isQuestionWarning5Sec ? '0 0 20px rgba(239, 68, 68, 0.4)' : 'none'
+                }}>
+                  <Timer size={16} color={isQuestionWarning5Sec ? '#ef4444' : isQuestionWarning15Sec ? '#f59e0b' : 'var(--accent-indigo)'} />
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                    {isQuestionTimerActive ? 'Question Answer Time:' : 'Interviewer Speaking:'}
+                  </span>
+                  <span style={{
+                    fontFamily: 'monospace',
+                    fontWeight: 800,
+                    fontSize: '1rem',
+                    color: isQuestionWarning5Sec ? '#ef4444' : isQuestionWarning15Sec ? '#f59e0b' : 'var(--accent-cyan)'
+                  }}>
+                    {isQuestionTimerActive ? formatCountdown(questionRemainingSeconds) : 'Timer Paused'}
+                  </span>
+                  {isQuestionWarning5Sec && (
+                    <span style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 800, textTransform: 'uppercase' }}>
+                      Final 5s!
+                    </span>
+                  )}
+                  {isQuestionWarning15Sec && (
+                    <span style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>
+                      15s remaining
+                    </span>
+                  )}
+                </div>
+
                 {/* Animated Glowing Voice Orb */}
                 <div 
                   style={{
@@ -575,8 +848,22 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
                     borderRadius: '14px',
                     fontSize: '0.925rem'
                   }}>
-                    <div style={{ fontWeight: 700, fontSize: '0.75rem', color: turn.speaker === 'AI' ? 'var(--accent-indigo)' : 'var(--accent-pink)', marginBottom: '4px' }}>
-                      {turn.speaker === 'AI' ? `IntervAI (${currentStyleConfig.name})` : candidateName}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.75rem', color: turn.speaker === 'AI' ? 'var(--accent-indigo)' : 'var(--accent-pink)' }}>
+                        {turn.speaker === 'AI' ? `IntervAI (${currentStyleConfig.name})` : candidateName}
+                      </span>
+                      {turn.status && turn.status !== 'answered' && (
+                        <span style={{
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          padding: '1px 6px',
+                          borderRadius: '8px',
+                          background: turn.status === 'timed_out' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                          color: turn.status === 'timed_out' ? '#f59e0b' : '#ef4444'
+                        }}>
+                          {turn.status === 'timed_out' ? 'Timed Out' : 'Unanswered'}
+                        </span>
+                      )}
                     </div>
                     <div>{turn.text}</div>
                     {turn.groundingSource && (
@@ -608,7 +895,7 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
                     onChange={(e) => setManualText(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && manualText.trim()) {
-                        handleCandidateFinalAnswer(manualText);
+                        handleCandidateFinalAnswer(manualText, 'answered');
                         setManualText('');
                       }
                     }}
@@ -625,7 +912,7 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
                   <button 
                     onClick={() => {
                       if (manualText.trim()) {
-                        handleCandidateFinalAnswer(manualText);
+                        handleCandidateFinalAnswer(manualText, 'answered');
                         setManualText('');
                       }
                     }}
@@ -647,6 +934,23 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
           <h4 style={{ fontSize: '1rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
             Interview Control & Context
           </h4>
+
+          {/* Timing Rules Card */}
+          <div style={{
+            padding: '12px',
+            borderRadius: '10px',
+            background: 'rgba(99, 102, 241, 0.07)',
+            border: '1px solid rgba(99, 102, 241, 0.25)'
+          }}>
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-indigo)', textTransform: 'uppercase', marginBottom: '4px' }}>
+              Pacing & Timing Limits
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div>• Total Session: <strong>{TOTAL_INTERVIEW_DURATION_SECONDS / 60} mins</strong></div>
+              <div>• Per-Question Limit: <strong>{PER_QUESTION_DURATION_SECONDS} secs</strong></div>
+              <div>• Warning Alerts: <strong>5m, 1m & 10s</strong> total; <strong>15s & 5s</strong> per question</div>
+            </div>
+          </div>
 
           {/* Active Style Details Card */}
           <div style={{
@@ -673,7 +977,7 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
               <span>{micGranted ? 'MICROPHONE ACTIVE' : 'MICROPHONE DISABLED'}</span>
             </div>
             <p style={{ fontSize: '0.775rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              {micGranted ? 'Automatic VAD turns speech into answer when you finish.' : 'Click Start Voice Session to activate microphone.'}
+              {micGranted ? 'Speak directly. Silence turn-detection finalizes your answer.' : 'Click Start Voice Session to activate microphone.'}
             </p>
           </div>
 
@@ -702,7 +1006,7 @@ export default function LiveInterviewPage({ params }: LiveInterviewProps) {
 
           <div style={{ marginTop: 'auto', padding: '10px', borderRadius: '8px', background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.2)', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
             <Sparkles size={14} color="var(--accent-indigo)" style={{ display: 'inline', marginRight: '6px' }} />
-            <span>AI speaks every question. Questions probe deeply according to {currentStyleConfig.name} interview patterns.</span>
+            <span>AI speaks every question aloud. Countdown begins only when interviewer speech completes.</span>
           </div>
         </div>
 
